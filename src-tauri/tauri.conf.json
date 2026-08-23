@@ -43,7 +43,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://releases.orionapp.com/{{target}}/{{current_version}}"
+        "https://github.com/Aung-Seth-Pai/orion/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEyNTRDN0YyNzgzQTY5NTEKUldSUmFUcDQ4c2RVRXFtZzBMS0huc0ZPOEhseWZYVXo2YjQ0NWZNWXVjVHNWRHF4QXg5L0hNNkIK"
     }
