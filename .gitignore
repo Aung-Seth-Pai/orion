@@ -1,0 +1,23 @@
+# Tauri private keys
+.tauri/
+*.key
+*.key.pub
+
+# Local SQLite Database
+src-tauri/data.db
+src-tauri/data.db-shm
+src-tauri/data.db-wal
+
+node_modules
+dist
+dist-ssr
+*.local
+"@
+
+src-tauri/target
+src-tauri/gen/schemas
+
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store

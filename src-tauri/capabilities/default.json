@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability for the main and spotlight windows",
+  "windows": ["main", "spotlight"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "notification:default",
+    "updater:default",
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [{ "path": "**" }]
+    }
+  ]
+}
