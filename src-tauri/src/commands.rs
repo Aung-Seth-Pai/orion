@@ -1286,6 +1286,34 @@ pub async fn log_timer_session(db: State<'_, Db>, input: NewTimerLog) -> Result<
 const MAX_QUERY_CHARS: usize = 100;
 const SEARCH_LIMIT: i64 = 25;
 
+/// Search UNION arms. Every arm MUST alias its columns to the outer query's
+/// schema (kind, id, title, subtitle, action) — scoped searches execute an
+/// arm standalone inside `SELECT kind, id, title, subtitle, action FROM (...)`.
+const SEARCH_ARM_WORKSPACES: &str = "
+    SELECT 'workspace' AS kind, id, name AS title,
+           'Workspace' AS subtitle, 'open_workspace' AS action
+    FROM workspaces WHERE name LIKE ?1 ESCAPE '\\'";
+
+const SEARCH_ARM_LINKS: &str = "
+    SELECT 'link' AS kind, id, title,
+           target_path AS subtitle, 'launch_resource' AS action
+    FROM resources
+    WHERE type = 'link' AND (title LIKE ?1 ESCAPE '\\' OR target_path LIKE ?1 ESCAPE '\\')";
+
+const SEARCH_ARM_FOLDERS: &str = "
+    SELECT 'folder' AS kind, id, title,
+           target_path AS subtitle, 'launch_resource' AS action
+    FROM resources
+    WHERE type = 'folder' AND (title LIKE ?1 ESCAPE '\\' OR target_path LIKE ?1 ESCAPE '\\')";
+
+const SEARCH_ARM_SCRIPTS: &str = "
+    SELECT 'script' AS kind, s.id, s.title,
+           CASE WHEN w.name IS NULL THEN 'Global script' ELSE w.name END AS subtitle,
+           'execute_script' AS action
+    FROM automation_scripts s
+    LEFT JOIN workspaces w ON w.id = s.workspace_id
+    WHERE s.title LIKE ?1 ESCAPE '\\'";
+
 fn build_like_pattern(query: &str) -> String {
     let escaped = query
         .replace('\\', "\\\\")
@@ -1294,47 +1322,81 @@ fn build_like_pattern(query: &str) -> String {
     format!("%{escaped}%")
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum SearchScope {
+    All,
+    Workspaces,
+    Links,
+    Folders,
+    Scripts,
+}
+
+/// Splits an optional leading scope prefix (`/ws`, `/link`, `/folder`,
+/// `/script`, case-insensitive) from the rest of the query. A space after
+/// the prefix is optional: "/ws project" and "/wsproject" both scope to
+/// workspaces with the term "project".
+fn parse_search_scope(query: &str) -> (SearchScope, String) {
+    let trimmed = query.trim();
+    let lower = trimmed.to_lowercase();
+
+    const PREFIXES: [(&str, SearchScope); 4] = [
+        ("/ws", SearchScope::Workspaces),
+        ("/link", SearchScope::Links),
+        ("/folder", SearchScope::Folders),
+        ("/script", SearchScope::Scripts),
+    ];
+
+    for (prefix, scope) in PREFIXES {
+        if lower.starts_with(prefix) {
+            let after = &trimmed[prefix.len()..];
+            return (scope, after.trim().to_string());
+        }
+    }
+
+    (SearchScope::All, trimmed.to_string())
+}
+
 #[tauri::command]
 pub async fn search_all(db: State<'_, Db>, query: String) -> Result<Vec<SearchResult>, String> {
-    let trimmed = query.trim();
-    if trimmed.is_empty() {
+    let (scope, term) = parse_search_scope(&query);
+    // A bare "/" prefix (e.g. typing exactly "/ws") lists that scope's items
+    // up to the limit; only an unscoped empty query returns nothing.
+    if term.is_empty() && scope == SearchScope::All {
         return Ok(Vec::new());
     }
-    if trimmed.len() > MAX_QUERY_CHARS {
+    if term.len() > MAX_QUERY_CHARS {
         return Err("Search query is too long".into());
     }
 
-    let pattern = build_like_pattern(trimmed);
+    let pattern = build_like_pattern(&term);
     let conn = db.0.clone();
 
     spawn_blocking(move || {
         let guard = lock_db(&conn)?;
-        let sql = "
-            SELECT kind, id, title, subtitle, action FROM (
-                SELECT 'workspace' AS kind, id, name AS title,
-                       'Workspace' AS subtitle, 'open_workspace' AS action
-                FROM workspaces WHERE name LIKE ?1 ESCAPE '\\'
-                UNION ALL
-                SELECT 'link', id, title, target_path, 'launch_resource'
-                FROM resources
-                WHERE type = 'link' AND (title LIKE ?1 ESCAPE '\\' OR target_path LIKE ?1 ESCAPE '\\')
-                UNION ALL
-                SELECT 'folder', id, title, target_path, 'launch_resource'
-                FROM resources
-                WHERE type = 'folder' AND (title LIKE ?1 ESCAPE '\\' OR target_path LIKE ?1 ESCAPE '\\')
-                UNION ALL
-                SELECT 'script', s.id, s.title,
-                       CASE WHEN w.name IS NULL THEN 'Global script' ELSE w.name END,
-                       'execute_script'
-                FROM automation_scripts s
-                LEFT JOIN workspaces w ON w.id = s.workspace_id
-                WHERE s.title LIKE ?1 ESCAPE '\\'
-            )
-            ORDER BY title COLLATE NOCASE ASC
-            LIMIT ?2";
+
+        let mut arms: Vec<&str> = Vec::new();
+        match scope {
+            SearchScope::All => {
+                arms.push(SEARCH_ARM_WORKSPACES);
+                arms.push(SEARCH_ARM_LINKS);
+                arms.push(SEARCH_ARM_FOLDERS);
+                arms.push(SEARCH_ARM_SCRIPTS);
+            }
+            SearchScope::Workspaces => arms.push(SEARCH_ARM_WORKSPACES),
+            SearchScope::Links => arms.push(SEARCH_ARM_LINKS),
+            SearchScope::Folders => arms.push(SEARCH_ARM_FOLDERS),
+            SearchScope::Scripts => arms.push(SEARCH_ARM_SCRIPTS),
+        }
+
+        let sql = format!(
+            "SELECT kind, id, title, subtitle, action FROM ({})
+             ORDER BY title COLLATE NOCASE ASC
+             LIMIT ?2",
+            arms.join(" UNION ALL ")
+        );
 
         let mut stmt = guard
-            .prepare(sql)
+            .prepare(sql.as_str())
             .map_err(|e| format!("failed to prepare search query: {e}"))?;
 
         let rows = stmt
@@ -2081,13 +2143,17 @@ pub async fn delete_env_var(db: State<'_, Db>, id: String) -> Result<bool, Strin
 
 #[cfg(test)]
 mod tests {
-    use super::validate_resource_fields;
+    use super::*;
 
     #[test]
     fn accepts_web_and_file_links() {
         assert!(validate_resource_fields("link", "Doc", "https://example.com", "default").is_ok());
-        assert!(validate_resource_fields("link", "Doc", "http://example.com/a.pdf", "chrome").is_ok());
-        assert!(validate_resource_fields("link", "Doc", "file:///C:/docs/spec.pdf", "edge").is_ok());
+        assert!(
+            validate_resource_fields("link", "Doc", "http://example.com/a.pdf", "chrome").is_ok()
+        );
+        assert!(
+            validate_resource_fields("link", "Doc", "file:///C:/docs/spec.pdf", "edge").is_ok()
+        );
     }
 
     #[test]
@@ -2097,5 +2163,46 @@ mod tests {
         assert!(validate_resource_fields("link", "", "https://x", "default").is_err());
         assert!(validate_resource_fields("link", "Doc", "https://\"; calc", "default").is_err());
         assert!(validate_resource_fields("folder", "F", "C:\\tmp", "default").is_ok());
+    }
+
+    #[test]
+    fn parses_search_scopes() {
+        assert_eq!(
+            parse_search_scope("github"),
+            (SearchScope::All, "github".to_string())
+        );
+        assert_eq!(
+            parse_search_scope("/ws foo"),
+            (SearchScope::Workspaces, "foo".to_string())
+        );
+        assert_eq!(
+            parse_search_scope("/WS"),
+            (SearchScope::Workspaces, String::new())
+        );
+        assert_eq!(
+            parse_search_scope("  /Link  docs  "),
+            (SearchScope::Links, "docs".to_string())
+        );
+        assert_eq!(
+            parse_search_scope("/folder c:\\tmp"),
+            (SearchScope::Folders, "c:\\tmp".to_string())
+        );
+        assert_eq!(
+            parse_search_scope("/script\tbackup"),
+            (SearchScope::Scripts, "backup".to_string())
+        );
+    }
+
+    #[test]
+    fn prefix_space_is_optional() {
+        // "/wsproject" scopes to workspaces with the term "project".
+        assert_eq!(
+            parse_search_scope("/wsproject"),
+            (SearchScope::Workspaces, "project".to_string())
+        );
+        assert_eq!(
+            parse_search_scope("/linkfoo.com"),
+            (SearchScope::Links, "foo.com".to_string())
+        );
     }
 }

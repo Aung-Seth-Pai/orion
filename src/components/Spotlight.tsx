@@ -125,7 +125,11 @@ export default function Spotlight() {
         </kbd>
       </div>
 
-      <ul ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-2">
+      <div className="px-4 pt-1.5 text-[10px] text-zinc-600">
+        Tip: Filter results using /ws, /link, /folder, or /script
+      </div>
+
+      <ul ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-2 pt-1">
         {results.length === 0 ? (
           <li className="px-3 py-6 text-center text-xs text-zinc-600">
             {query.trim()

@@ -8,6 +8,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import {
   createScript,
   deleteScript,
@@ -150,6 +151,12 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
   }
 
   async function handleDelete(id: string) {
+    const approved = await confirm(
+      "Are you sure you want to delete this script? This action cannot be undone.",
+      { title: "Delete Script", kind: "warning" }
+    );
+    if (!approved) return;
+
     const snapshot = scripts;
     setScripts((prev) => prev.filter((s) => s.id !== id));
     try {
