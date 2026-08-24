@@ -1,7 +1,7 @@
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
-use tauri_plugin_global_shortcut::ShortcutState;
 use tauri::{AppHandle, Manager};
+use tauri_plugin_global_shortcut::ShortcutState;
 
 pub const SPOTLIGHT_SHORTCUT: &str = "CmdOrCtrl+Shift+O";
 

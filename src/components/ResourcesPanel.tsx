@@ -216,6 +216,11 @@ export default function ResourcesPanel({
                 }
                 className="col-span-2 w-full rounded bg-zinc-800 px-2.5 py-1.5 text-[13px] text-zinc-100 placeholder-zinc-500 outline-none ring-1 ring-transparent focus:ring-indigo-500/50"
               />
+              {type === "link" && (
+                <p className="col-span-2 -mt-1 text-[10px] text-zinc-600">
+                  Must start with http://, https://, or file://
+                </p>
+              )}
 
               {type === "link" && (
                 <>

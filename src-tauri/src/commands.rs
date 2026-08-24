@@ -14,8 +14,8 @@ use tokio::task::spawn_blocking;
 use crate::db::Db;
 use crate::models::{
     AutomationScript, BackupPayload, EnvVar, NewResource, NewScript, NewTask, NewTimerLog,
-    NewWorkspace, Resource, ResourcePatch, ScriptPatch, SearchResult, Task, TimerLog,
-    Workspace, WorkspacePatch,
+    NewWorkspace, Resource, ResourcePatch, ScriptPatch, SearchResult, Task, TimerLog, Workspace,
+    WorkspacePatch,
 };
 
 enum SqlValue {
@@ -260,13 +260,15 @@ fn validate_resource_fields(
     if target.contains('"') || target.contains('\0') {
         return Err("Target path contains invalid characters".into());
     }
-    if resource_type == "link" && !(target.starts_with("http://") || target.starts_with("https://"))
+    if resource_type == "link"
+        && !(target.starts_with("http://")
+            || target.starts_with("https://")
+            || target.starts_with("file://"))
     {
-        return Err("Links must start with http:// or https://".into());
+        return Err("Links must start with http://, https:// or file://".to_string());
     }
     Ok(())
 }
-
 #[tauri::command]
 pub async fn get_resources(
     db: State<'_, Db>,
@@ -601,11 +603,11 @@ pub async fn launch_resource(
         "folder" => {
             let path = PathBuf::from(&target.target_path);
             if !path.is_dir() {
-                log::error!("Launch failed: folder does not exist: {}", target.target_path);
-                return Err(format!(
-                    "Folder does not exist: {}",
+                log::error!(
+                    "Launch failed: folder does not exist: {}",
                     target.target_path
-                ));
+                );
+                return Err(format!("Folder does not exist: {}", target.target_path));
             }
 
             match action_override.as_deref() {
@@ -624,10 +626,7 @@ pub async fn launch_resource(
                     Ok(format!("Opened in {ide_command}"))
                 }
                 Some("terminal") => {
-                    if let Err(e) = Command::new("wt")
-                        .args(["-d", &target.target_path])
-                        .spawn()
-                    {
+                    if let Err(e) = Command::new("wt").args(["-d", &target.target_path]).spawn() {
                         let msg = format!(
                             "failed to open terminal here (is Windows Terminal installed?): {e}"
                         );
@@ -652,10 +651,15 @@ pub async fn launch_resource(
         }
         "link" => {
             let url = target.target_path.trim();
-            if !(url.starts_with("http://") || url.starts_with("https://")) {
-                return Err("Refusing to launch: links must be http(s) URLs".into());
+            if !(url.starts_with("http://")
+                || url.starts_with("https://")
+                || url.starts_with("file://"))
+            {
+                log::error!("Launch failed for '{log_id}': refusing non-http(s)/file URL");
+                return Err("Refusing to launch: links must be http(s) or file URLs".into());
             }
             if url.contains('"') || url.contains('\0') {
+                log::error!("Launch failed for '{log_id}': URL contains invalid characters");
                 return Err("Refusing to launch: URL contains invalid characters".into());
             }
 
@@ -698,9 +702,7 @@ pub async fn launch_resource(
                         .map_err(|e| format!("failed to launch Firefox: {e}"))?;
                 }
                 other => {
-                    log::error!(
-                        "Launch failed for '{log_id}': unknown preferred app '{other}'"
-                    );
+                    log::error!("Launch failed for '{log_id}': unknown preferred app '{other}'");
                     return Err(format!("Unknown preferred app '{other}'"));
                 }
             }
@@ -1052,16 +1054,14 @@ async fn run_temp_script(fetched: FetchedScript, temp_path: PathBuf) -> Result<S
         command.env("WSLENV", wslenv);
     }
 
-    let child = command
-        .spawn()
-        .map_err(|e| {
-            let msg = format!(
-                "failed to start interpreter for '{}': {e}",
-                fetched.script_type
-            );
-            log::error!("{msg}");
-            msg
-        })?;
+    let child = command.spawn().map_err(|e| {
+        let msg = format!(
+            "failed to start interpreter for '{}': {e}",
+            fetched.script_type
+        );
+        log::error!("{msg}");
+        msg
+    })?;
 
     let wait = child.wait_with_output();
     let output = match tokio::time::timeout(Duration::from_secs(SCRIPT_TIMEOUT_SECS), wait).await {
@@ -1119,15 +1119,14 @@ pub async fn execute_script(db: State<'_, Db>, id: String) -> Result<String, Str
 
     let fetched: FetchedScript = spawn_blocking(move || {
         let guard = lock_db(&conn)?;
-        let (script_type, script_content, workspace_id): (String, String, Option<String>) =
-            guard
-                .query_row(
-                    "SELECT script_type, script_content, workspace_id
+        let (script_type, script_content, workspace_id): (String, String, Option<String>) = guard
+            .query_row(
+                "SELECT script_type, script_content, workspace_id
                      FROM automation_scripts WHERE id = ?1",
-                    params![id],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .map_err(|_| format!("Script '{id}' not found"))?;
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|_| format!("Script '{id}' not found"))?;
 
         let env_vars: HashMap<String, String> = match &workspace_id {
             Some(ws_id) => {
@@ -1179,7 +1178,10 @@ pub async fn execute_script(db: State<'_, Db>, id: String) -> Result<String, Str
     .map_err(|e| format!("background task failed: {e}"))??;
 
     if !VALID_SCRIPT_TYPES.contains(&fetched.script_type.as_str()) {
-        log::error!("Script execution rejected: unknown type '{}'", fetched.script_type);
+        log::error!(
+            "Script execution rejected: unknown type '{}'",
+            fetched.script_type
+        );
         return Err(format!("Unknown script type '{}'", fetched.script_type));
     }
 
@@ -1373,7 +1375,9 @@ pub async fn get_settings(db: State<'_, Db>) -> Result<HashMap<String, String>, 
             .map_err(|e| format!("failed to prepare query: {e}"))?;
 
         let rows = stmt
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
             .map_err(|e| format!("failed to query settings: {e}"))?;
 
         let mut settings = HashMap::new();
@@ -1718,8 +1722,8 @@ pub async fn import_data(db: State<'_, Db>, json_payload: String) -> Result<(), 
     spawn_blocking(move || {
         // Parsing happens here on the blocking thread pool so a large file
         // can never stall the async runtime or the UI.
-        let payload: BackupPayload = serde_json::from_str(&json_payload)
-            .map_err(|e| format!("Invalid backup file: {e}"))?;
+        let payload: BackupPayload =
+            serde_json::from_str(&json_payload).map_err(|e| format!("Invalid backup file: {e}"))?;
 
         if payload.version != BACKUP_VERSION && payload.version != BACKUP_VERSION + 1 {
             return Err(format!(
@@ -1753,7 +1757,8 @@ pub async fn import_data(db: State<'_, Db>, json_payload: String) -> Result<(), 
         for timer in &payload.timer_logs {
             if !known_workspaces.contains(timer.workspace_id.as_str()) {
                 return Err(
-                    "Backup is inconsistent: a timer entry references an unknown workspace".to_string(),
+                    "Backup is inconsistent: a timer entry references an unknown workspace"
+                        .to_string(),
                 );
             }
         }
@@ -1892,7 +1897,9 @@ pub async fn create_task(db: State<'_, Db>, input: NewTask) -> Result<Task, Stri
             })?;
 
         let mut stmt = guard
-            .prepare("SELECT id, workspace_id, title, is_completed, created_at FROM tasks WHERE id = ?1")
+            .prepare(
+                "SELECT id, workspace_id, title, is_completed, created_at FROM tasks WHERE id = ?1",
+            )
             .map_err(|e| format!("failed to prepare query: {e}"))?;
         stmt.query_row(params![id], row_to_task)
             .map_err(|e| format!("failed to read back task: {e}"))
@@ -1922,7 +1929,9 @@ pub async fn update_task_status(
         }
 
         let mut stmt = guard
-            .prepare("SELECT id, workspace_id, title, is_completed, created_at FROM tasks WHERE id = ?1")
+            .prepare(
+                "SELECT id, workspace_id, title, is_completed, created_at FROM tasks WHERE id = ?1",
+            )
             .map_err(|e| format!("failed to prepare query: {e}"))?;
         stmt.query_row(params![id], row_to_task)
             .map_err(|e| format!("failed to read back task: {e}"))
@@ -1962,10 +1971,7 @@ fn validate_env_key(key: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn get_env_vars(
-    db: State<'_, Db>,
-    workspace_id: String,
-) -> Result<Vec<EnvVar>, String> {
+pub async fn get_env_vars(db: State<'_, Db>, workspace_id: String) -> Result<Vec<EnvVar>, String> {
     let conn = db.0.clone();
 
     spawn_blocking(move || {
@@ -2071,4 +2077,25 @@ pub async fn delete_env_var(db: State<'_, Db>, id: String) -> Result<bool, Strin
     })
     .await
     .map_err(|e| format!("background task failed: {e}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_resource_fields;
+
+    #[test]
+    fn accepts_web_and_file_links() {
+        assert!(validate_resource_fields("link", "Doc", "https://example.com", "default").is_ok());
+        assert!(validate_resource_fields("link", "Doc", "http://example.com/a.pdf", "chrome").is_ok());
+        assert!(validate_resource_fields("link", "Doc", "file:///C:/docs/spec.pdf", "edge").is_ok());
+    }
+
+    #[test]
+    fn rejects_bad_schemes_and_garbage() {
+        assert!(validate_resource_fields("link", "Doc", "calc.exe", "default").is_err());
+        assert!(validate_resource_fields("link", "Doc", "ftp://x", "default").is_err());
+        assert!(validate_resource_fields("link", "", "https://x", "default").is_err());
+        assert!(validate_resource_fields("link", "Doc", "https://\"; calc", "default").is_err());
+        assert!(validate_resource_fields("folder", "F", "C:\\tmp", "default").is_ok());
+    }
 }

@@ -13,6 +13,7 @@ dist
 dist-ssr
 *.local
 "@
+dev_test.md
 
 src-tauri/target
 src-tauri/gen/schemas

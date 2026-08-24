@@ -1,7 +1,7 @@
 
 # Orion 🚀
 
-Orion is a background productivity cockpit and environment manager built for developers and data professionals. It runs silently in your system tray and provides instant access to your workspaces, local environments, and automation scripts via a global Spotlight-style search.
+Orion is a background productivity cockpit and environment manager. It runs silently in your system tray and provides instant access to your workspaces, local environments, and automation scripts via a global Spotlight-style search.
 
 ## ✨ Key Features
 

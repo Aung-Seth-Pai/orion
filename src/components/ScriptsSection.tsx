@@ -1,6 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { KeyRound, Loader2, Plus, ScrollText, Trash2, X } from "lucide-react";
-import { createScript, deleteScript, executeScript, getScripts } from "../api/scripts";
+import {
+  KeyRound,
+  Loader2,
+  Pencil,
+  Plus,
+  ScrollText,
+  Trash2,
+  X,
+} from "lucide-react";
+import {
+  createScript,
+  deleteScript,
+  executeScript,
+  getScripts,
+  updateScript,
+} from "../api/scripts";
 import type { AutomationScript, ScriptType, Workspace } from "../types";
 import EnvVarsModal from "./EnvVarsModal";
 
@@ -40,6 +54,7 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
   const [loading, setLoading] = useState(true);
 
   const [composerOpen, setComposerOpen] = useState(false);
+  const [editingScript, setEditingScript] = useState<AutomationScript | null>(null);
   const [title, setTitle] = useState("");
   const [scriptType, setScriptType] = useState<ScriptType>("powershell");
   const [content, setContent] = useState("");
@@ -55,6 +70,7 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
     let cancelled = false;
     setLoading(true);
     setOutputs({});
+    setEditingScript(null);
     // Workspace-specific scripts plus global scripts (workspace_id IS NULL).
     Promise.all([getScripts(workspace.id), getScripts(null)])
       .then(([own, global]) => {
@@ -76,19 +92,44 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
     setTitle("");
     setScriptType("powershell");
     setContent("");
+    setEditingScript(null);
   }
 
-  async function handleCreate() {
+  function closeComposer() {
+    setComposerOpen(false);
+    resetComposer();
+  }
+
+  function openEdit(script: AutomationScript) {
+    setEditingScript(script);
+    setTitle(script.title);
+    setScriptType(script.scriptType);
+    setContent(script.scriptContent);
+    setComposerOpen(true);
+  }
+
+  async function handleSubmit() {
     if (saving || !title.trim() || !content.trim()) return;
     setSaving(true);
     try {
-      const script = await createScript({
-        workspaceId: workspace.id,
-        title,
-        scriptType,
-        scriptContent: content,
-      });
-      setScripts((prev) => [...prev, script]);
+      if (editingScript) {
+        const updated = await updateScript(editingScript.id, {
+          title,
+          scriptType,
+          scriptContent: content,
+        });
+        setScripts((prev) =>
+          prev.map((s) => (s.id === updated.id ? updated : s))
+        );
+      } else {
+        const script = await createScript({
+          workspaceId: workspace.id,
+          title,
+          scriptType,
+          scriptContent: content,
+        });
+        setScripts((prev) => [...prev, script]);
+      }
       resetComposer();
       setComposerOpen(false);
     } catch (e) {
@@ -101,11 +142,10 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
-      void handleCreate();
+      void handleSubmit();
     } else if (e.key === "Escape") {
       e.preventDefault();
-      setComposerOpen(false);
-      resetComposer();
+      closeComposer();
     }
   }
 
@@ -158,7 +198,7 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
           Variables
         </button>
         <button
-          onClick={() => setComposerOpen((v) => !v)}
+          onClick={() => (composerOpen ? closeComposer() : setComposerOpen(true))}
           className="flex items-center gap-1 rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-zinc-100 cursor-default"
         >
           {composerOpen ? <X size={11} /> : <Plus size={11} />}
@@ -204,7 +244,7 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
               Ctrl+Enter to save · Esc to cancel
             </span>
             <button
-              onClick={() => void handleCreate()}
+              onClick={() => void handleSubmit()}
               disabled={!title.trim() || !content.trim() || saving}
               className="flex items-center gap-1.5 rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white transition-colors enabled:hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -213,7 +253,7 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
               ) : (
                 <Plus size={12} />
               )}
-              Add script
+              {editingScript ? "Update Script" : "Add script"}
             </button>
           </div>
         </div>
@@ -263,6 +303,13 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
                   >
                     <Trash2 size={13} />
                   </span>
+                  <button
+                    onClick={() => openEdit(script)}
+                    title="Edit script"
+                    className="rounded p-1 text-zinc-500 opacity-0 transition-opacity hover:text-indigo-300 group-hover:opacity-100 cursor-default"
+                  >
+                    <Pencil size={13} />
+                  </button>
                   <button
                     onClick={() => void handleRun(script.id)}
                     disabled={running}
