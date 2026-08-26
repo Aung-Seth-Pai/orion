@@ -82,6 +82,52 @@ const MIGRATIONS: &[&str] = &[
     ",
 ];
 
+/// Schema revision recorded in `PRAGMA user_version`. Bump this and add a
+/// matching block in [`apply_versioned_migrations`] whenever an existing
+/// database needs altering — the base `MIGRATIONS` batch above only ever runs
+/// `CREATE TABLE IF NOT EXISTS`, so it cannot change a table that already exists.
+const SCHEMA_VERSION: i64 = 1;
+
+/// Non-destructive, in-place upgrades for databases created by an older build.
+/// Each step runs exactly once: `user_version` is advanced inside the same
+/// batch as the DDL, so a crash mid-upgrade leaves the version untouched and
+/// the step is retried on the next launch.
+fn apply_versioned_migrations(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|e| format!("failed to read schema version: {e}"))?;
+
+    if version >= SCHEMA_VERSION {
+        return Ok(());
+    }
+
+    if version < 1 {
+        // Marks the point in time a workspace's accumulated time was zeroed.
+        // 0 (the default) means "never reset" — count every session ever logged.
+        conn.execute_batch(
+            "ALTER TABLE workspaces ADD COLUMN timer_reset_at INTEGER DEFAULT 0;
+             PRAGMA user_version = 1;",
+        )
+        .map_err(|e| format!("migration to schema version 1 failed: {e}"))?;
+        log::info!("Database migrated to schema version 1 (workspaces.timer_reset_at)");
+    }
+
+    Ok(())
+}
+
+/// Brings an open connection up to the current schema: base tables first, then
+/// the versioned upgrades. Split out of [`Db::initialize`] so tests can build
+/// an equivalent database in memory.
+pub(crate) fn init_schema(conn: &Connection) -> Result<(), Box<dyn std::error::Error>> {
+    for migration in MIGRATIONS {
+        conn.execute_batch(migration)?;
+    }
+    // Runs after the base schema so a brand-new database and an upgraded one
+    // converge on the same shape.
+    apply_versioned_migrations(conn)?;
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct Db(pub Arc<Mutex<Connection>>);
 
@@ -106,10 +152,65 @@ impl Db {
         conn.pragma_update(None, "busy_timeout", 5000)
             .map_err(|e| format!("failed to set busy timeout: {e}"))?;
 
-        for migration in MIGRATIONS {
-            conn.execute_batch(migration)?;
-        }
+        init_schema(&conn)?;
 
         Ok(Self(Arc::new(Mutex::new(conn))))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn schema_version(conn: &Connection) -> i64 {
+        conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    fn has_timer_reset_at(conn: &Connection) -> bool {
+        conn.prepare("SELECT timer_reset_at FROM workspaces").is_ok()
+    }
+
+    #[test]
+    fn fresh_database_reaches_the_current_schema_version() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+
+        assert_eq!(schema_version(&conn), SCHEMA_VERSION);
+        assert!(has_timer_reset_at(&conn));
+    }
+
+    #[test]
+    fn upgrade_keeps_existing_rows_and_runs_once() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        // A database as an older build left it: base schema, version 0, data.
+        for migration in MIGRATIONS {
+            conn.execute_batch(migration).unwrap();
+        }
+        conn.execute(
+            "INSERT INTO workspaces (id, name) VALUES ('w1', 'Existing')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(schema_version(&conn), 0);
+        assert!(!has_timer_reset_at(&conn));
+
+        apply_versioned_migrations(&conn).unwrap();
+
+        assert_eq!(schema_version(&conn), 1);
+        let (name, reset_at): (String, i64) = conn
+            .query_row(
+                "SELECT name, timer_reset_at FROM workspaces WHERE id = 'w1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "Existing");
+        assert_eq!(reset_at, 0, "existing workspaces count all logged time");
+
+        // Re-running must not attempt the ALTER a second time.
+        apply_versioned_migrations(&conn).unwrap();
+        assert_eq!(schema_version(&conn), 1);
     }
 }

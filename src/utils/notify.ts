@@ -1,7 +1,7 @@
+import { invoke } from "@tauri-apps/api/core";
 import {
   isPermissionGranted,
   requestPermission,
-  sendNotification,
 } from "@tauri-apps/plugin-notification";
 
 /**
@@ -55,7 +55,9 @@ export async function notifyPomodoroComplete(): Promise<void> {
       granted = (await requestPermission()) === "granted";
     }
     if (granted) {
-      sendNotification({
+      // Sent from Rust rather than via sendNotification so the toast carries an
+      // explicit icon path; Windows frequently suppresses iconless banners.
+      await invoke("notify_timer_complete", {
         title: "Pomodoro Complete",
         body: "Session logged. Time for a short break!",
       });

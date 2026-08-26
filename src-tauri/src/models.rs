@@ -9,6 +9,11 @@ pub struct Workspace {
     pub icon: Option<String>,
     pub sort_order: i64,
     pub created_at: String,
+    /// Unix seconds of the last "Total time" reset; 0 means never reset.
+    /// Defaulted on deserialize so backups written before schema version 1
+    /// still import.
+    #[serde(default)]
+    pub timer_reset_at: i64,
 }
 
 #[derive(Debug, Deserialize)]

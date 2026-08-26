@@ -33,6 +33,9 @@ function MainShell() {
   // Lives here so timers keep running (and complete) even when the user is
   // viewing a different workspace and the widget is unmounted.
   const [timers, setTimers] = useState<Record<string, TimerData>>({});
+  // Incremented after a session row is committed, so views showing accumulated
+  // totals know exactly when a refetch will see the new data.
+  const [logVersion, setLogVersion] = useState(0);
   const [pomodoroMinutes, setPomodoroMinutes] = useState(25);
   const [toast, setToast] = useState<{ id: number; message: string } | null>(
     null
@@ -94,7 +97,9 @@ function MainShell() {
         workspaceId,
         durationSeconds: total,
         sessionType: "pomodoro",
-      }).catch((e) => setError(String(e)));
+      })
+        .then(() => setLogVersion((v) => v + 1))
+        .catch((e) => setError(String(e)));
 
       // Native toast attempt + beep fallback + in-app banner.
       void notifyPomodoroComplete();
@@ -173,7 +178,9 @@ function MainShell() {
         workspaceId,
         durationSeconds: duration,
         sessionType: timer.mode,
-      }).catch((e) => setError(String(e)));
+      })
+        .then(() => setLogVersion((v) => v + 1))
+        .catch((e) => setError(String(e)));
     }
   }, []);
 
@@ -195,11 +202,12 @@ function MainShell() {
     () => ({
       states: timers,
       pomodoroSeconds,
+      logVersion,
       start: startTimer,
       stop: stopTimer,
       reset: resetTimer,
     }),
-    [timers, pomodoroSeconds, startTimer, stopTimer, resetTimer]
+    [timers, pomodoroSeconds, logVersion, startTimer, stopTimer, resetTimer]
   );
   // -------------------------------------------------------------------------
 

@@ -3,13 +3,17 @@ import {
   ExternalLink,
   Folder,
   Globe,
+  Hourglass,
   Loader2,
   Plus,
   Rocket,
+  RotateCcw,
   Trash2,
   X,
 } from "lucide-react";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { createResource, deleteResource, getResources, launchResource } from "../api/resources";
+import { getWorkspaceTime, resetWorkspaceTime } from "../api/timers";
 import { IDLE_TIMER } from "../types";
 import type {
   PreferredApp,
@@ -30,6 +34,14 @@ const BROWSER_LABELS: Record<PreferredApp, string> = {
   firefox: "Firefox",
 };
 
+/** Accumulated time as HH:MM:SS, with hours growing past two digits. */
+function formatTotalTime(totalSeconds: number): string {
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return [h, m, s].map((part) => String(part).padStart(2, "0")).join(":");
+}
+
 interface ResourcesPanelProps {
   workspace: Workspace;
   onError: (message: string | null) => void;
@@ -44,6 +56,8 @@ export default function ResourcesPanel({
   const [resources, setResources] = useState<Resource[]>([]);
   const [loading, setLoading] = useState(true);
   const [launchingId, setLaunchingId] = useState<string | null>(null);
+  const [totalSeconds, setTotalSeconds] = useState<number | null>(null);
+  const [resettingTime, setResettingTime] = useState(false);
 
   const [composerOpen, setComposerOpen] = useState(false);
   const [type, setType] = useState<ResourceType>("link");
@@ -70,9 +84,43 @@ export default function ResourcesPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace.id]);
 
+  // Refetched on workspace switch and once each finished session is committed
+  // (logVersion), so the header total stays in step with the timer widget.
+  useEffect(() => {
+    let cancelled = false;
+    getWorkspaceTime(workspace.id)
+      .then((seconds) => {
+        if (!cancelled) setTotalSeconds(seconds);
+      })
+      .catch((e) => !cancelled && onError(String(e)));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace.id, timer.logVersion]);
+
   useEffect(() => {
     if (composerOpen) titleRef.current?.focus();
   }, [composerOpen]);
+
+  async function handleResetTime() {
+    if (resettingTime) return;
+    const approved = await confirm(
+      "Reset accumulated time for this workspace?",
+      { title: "Reset Total Time", kind: "warning" }
+    );
+    if (!approved) return;
+
+    setResettingTime(true);
+    try {
+      await resetWorkspaceTime(workspace.id);
+      setTotalSeconds(0);
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setResettingTime(false);
+    }
+  }
 
   function resetComposer() {
     setType("link");
@@ -155,6 +203,25 @@ export default function ResourcesPanel({
           style={workspace.color ? { backgroundColor: workspace.color } : undefined}
         />
         <h2 className="truncate text-sm font-medium text-zinc-200">{workspace.name}</h2>
+
+        <div
+          title="Total time tracked in this workspace"
+          className="flex shrink-0 items-center gap-1.5 rounded-md bg-zinc-800/70 px-2 py-1 ring-1 ring-zinc-700/50"
+        >
+          <Hourglass size={11} className="text-zinc-500" />
+          <span className="font-mono text-[11px] tabular-nums text-zinc-300">
+            {totalSeconds === null ? "--:--:--" : formatTotalTime(totalSeconds)}
+          </span>
+          <button
+            onClick={() => void handleResetTime()}
+            disabled={totalSeconds === null || resettingTime}
+            title="Reset accumulated time"
+            className="rounded p-0.5 text-zinc-500 transition-colors enabled:hover:bg-zinc-700/60 enabled:hover:text-zinc-300 disabled:opacity-40 cursor-default"
+          >
+            <RotateCcw size={11} className={resettingTime ? "animate-spin" : ""} />
+          </button>
+        </div>
+
         <div className="ml-auto flex items-center gap-2">
           {/* No key prop: the widget is controlled by global timer state in
               App, so sessions keep running across workspace switches. */}

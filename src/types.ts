@@ -5,6 +5,8 @@ export interface Workspace {
   icon: string | null;
   sortOrder: number;
   createdAt: string;
+  /** Unix seconds of the last "Total time" reset; 0 means never reset. */
+  timerResetAt: number;
 }
 
 export interface NewWorkspaceInput {
@@ -147,6 +149,12 @@ export const IDLE_TIMER: TimerData = {
 export interface TimerController {
   states: Record<string, TimerData>;
   pomodoroSeconds: number;
+  /**
+   * Bumped once a finished session has been written to SQLite. Views showing
+   * accumulated totals watch this instead of the timer phase, which changes
+   * before the insert completes.
+   */
+  logVersion: number;
   start(workspaceId: string, mode: SessionType): void;
   stop(workspaceId: string): void;
   reset(workspaceId: string): void;

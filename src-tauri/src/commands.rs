@@ -8,6 +8,7 @@ use rusqlite::types::{ToSql, ToSqlOutput};
 use rusqlite::{params, params_from_iter};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_notification::NotificationExt;
 use tokio::process::Command;
 use tokio::task::spawn_blocking;
 
@@ -34,7 +35,7 @@ impl ToSql for SqlValue {
     }
 }
 
-const COLUMNS: &str = "id, name, color, icon, sort_order, created_at";
+const COLUMNS: &str = "id, name, color, icon, sort_order, created_at, timer_reset_at";
 
 const RESOURCE_COLUMNS: &str =
     "id, workspace_id, type, title, target_path, preferred_app, profile_name, sort_order, created_at";
@@ -60,6 +61,7 @@ fn row_to_workspace(row: &rusqlite::Row) -> rusqlite::Result<Workspace> {
         icon: row.get(3)?,
         sort_order: row.get(4)?,
         created_at: row.get(5)?,
+        timer_reset_at: row.get(6)?,
     })
 }
 
@@ -1283,6 +1285,112 @@ pub async fn log_timer_session(db: State<'_, Db>, input: NewTimerLog) -> Result<
     .map_err(|e| format!("background task failed: {e}"))?
 }
 
+/// Sums the sessions a workspace has logged since its reset marker.
+///
+/// `timer_logs.started_at` is a UTC datetime string while `timer_reset_at` is
+/// unix seconds, so the timestamp is converted before comparing — SQLite would
+/// otherwise sort every TEXT value above every INTEGER and count all sessions.
+///
+/// Sessions are attributed by when they *started*: a session already running
+/// when the user resets is excluded in full, not prorated.
+const WORKSPACE_TIME_SQL: &str = "
+    SELECT COALESCE(SUM(duration_seconds), 0) FROM timer_logs
+    WHERE workspace_id = ?1
+      AND CAST(strftime('%s', started_at) AS INTEGER) >
+          COALESCE((SELECT timer_reset_at FROM workspaces WHERE id = ?1), 0)";
+
+/// Total logged seconds for a workspace since its last "Total time" reset.
+#[tauri::command]
+pub async fn get_workspace_time(db: State<'_, Db>, workspace_id: String) -> Result<i64, String> {
+    let conn = db.0.clone();
+
+    spawn_blocking(move || {
+        let guard = lock_db(&conn)?;
+        guard
+            .query_row(WORKSPACE_TIME_SQL, params![workspace_id], |row| {
+                row.get::<_, i64>(0)
+            })
+            .map_err(|e| format!("failed to total workspace time: {e}"))
+    })
+    .await
+    .map_err(|e| format!("background task failed: {e}"))?
+}
+
+/// Zeroes a workspace's accumulated time by moving its reset marker to now.
+/// The underlying `timer_logs` rows are kept, so history and backups stay intact.
+#[tauri::command]
+pub async fn reset_workspace_time(db: State<'_, Db>, workspace_id: String) -> Result<(), String> {
+    let conn = db.0.clone();
+
+    spawn_blocking(move || {
+        let guard = lock_db(&conn)?;
+        let rows = guard
+            .execute(
+                "UPDATE workspaces
+                 SET timer_reset_at = CAST(strftime('%s', 'now') AS INTEGER)
+                 WHERE id = ?1",
+                params![workspace_id],
+            )
+            .map_err(|e| format!("failed to reset workspace time: {e}"))?;
+
+        if rows == 0 {
+            return Err(format!("Workspace '{workspace_id}' not found"));
+        }
+        log::info!("Accumulated time reset for workspace '{workspace_id}'");
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("background task failed: {e}"))?
+}
+
+const NOTIFICATION_ICON_PNG: &[u8] = include_bytes!("../icons/128x128.png");
+const NOTIFICATION_ICON_FILE: &str = "notification-icon.png";
+const MAX_NOTIFICATION_CHARS: usize = 256;
+
+/// The notification plugin's icon field takes an absolute file path, not a
+/// bundle identifier, and the bundled `icons/` directory is not shipped as a
+/// runtime resource. The app icon is therefore embedded at compile time and
+/// extracted once into the app data directory so a stable path always exists.
+fn notification_icon_path(app: &AppHandle) -> Option<String> {
+    let dir = app.path().app_data_dir().ok()?;
+    let path = dir.join(NOTIFICATION_ICON_FILE);
+
+    if !path.is_file() {
+        std::fs::create_dir_all(&dir).ok()?;
+        if let Err(e) = std::fs::write(&path, NOTIFICATION_ICON_PNG) {
+            log::warn!("failed to extract notification icon: {e}");
+            return None;
+        }
+    }
+    Some(path.to_string_lossy().into_owned())
+}
+
+/// Fires a native toast for a finished timer session.
+///
+/// Runs in Rust rather than through the JS plugin so the notification can
+/// carry an explicit icon path — Windows tends to drop banners that reference
+/// no icon at all.
+#[tauri::command]
+pub async fn notify_timer_complete(
+    app: AppHandle,
+    title: String,
+    body: String,
+) -> Result<(), String> {
+    if title.len() > MAX_NOTIFICATION_CHARS || body.len() > MAX_NOTIFICATION_CHARS {
+        return Err("Notification text is too long".into());
+    }
+
+    let mut builder = app.notification().builder().title(title).body(body);
+    if let Some(icon) = notification_icon_path(&app) {
+        builder = builder.icon(icon);
+    }
+
+    builder.show().map_err(|e| {
+        log::error!("Timer notification failed: {e}");
+        format!("failed to show notification: {e}")
+    })
+}
+
 const MAX_QUERY_CHARS: usize = 100;
 const SEARCH_LIMIT: i64 = 25;
 
@@ -1680,9 +1788,17 @@ pub async fn export_all_data(db: State<'_, Db>) -> Result<String, String> {
 
 fn insert_workspace(tx: &rusqlite::Transaction, w: &Workspace) -> Result<(), String> {
     tx.execute(
-        "INSERT INTO workspaces (id, name, color, icon, sort_order, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![w.id, w.name, w.color, w.icon, w.sort_order, w.created_at],
+        "INSERT INTO workspaces (id, name, color, icon, sort_order, created_at, timer_reset_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            w.id,
+            w.name,
+            w.color,
+            w.icon,
+            w.sort_order,
+            w.created_at,
+            w.timer_reset_at
+        ],
     )
     .map(|_| ())
     .map_err(|e| format!("failed to import workspace '{}': {e}", w.name))
@@ -2191,6 +2307,73 @@ mod tests {
             parse_search_scope("/script\tbackup"),
             (SearchScope::Scripts, "backup".to_string())
         );
+    }
+
+    fn test_db_with_sessions() -> rusqlite::Connection {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::init_schema(&conn).unwrap();
+        conn.execute("INSERT INTO workspaces (id, name) VALUES ('w1', 'Work')", [])
+            .unwrap();
+        conn.execute("INSERT INTO workspaces (id, name) VALUES ('w2', 'Other')", [])
+            .unwrap();
+
+        // Two sessions on w1 (two hours ago and ten minutes ago) plus one on w2.
+        conn.execute_batch(
+            "INSERT INTO timer_logs (id, workspace_id, duration_seconds, started_at)
+                 VALUES ('t1', 'w1', 600, datetime('now', '-2 hours'));
+             INSERT INTO timer_logs (id, workspace_id, duration_seconds, started_at)
+                 VALUES ('t2', 'w1', 300, datetime('now', '-10 minutes'));
+             INSERT INTO timer_logs (id, workspace_id, duration_seconds, started_at)
+                 VALUES ('t3', 'w2', 999, datetime('now', '-5 minutes'));",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn workspace_time(conn: &rusqlite::Connection, workspace_id: &str) -> i64 {
+        conn.query_row(WORKSPACE_TIME_SQL, params![workspace_id], |row| row.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn totals_only_this_workspaces_sessions() {
+        let conn = test_db_with_sessions();
+        assert_eq!(workspace_time(&conn, "w1"), 900);
+        assert_eq!(workspace_time(&conn, "w2"), 999);
+        assert_eq!(workspace_time(&conn, "missing"), 0);
+    }
+
+    #[test]
+    fn reset_marker_excludes_earlier_sessions() {
+        let conn = test_db_with_sessions();
+
+        // Marker one hour back: the two-hour-old session drops out.
+        conn.execute(
+            "UPDATE workspaces
+             SET timer_reset_at = CAST(strftime('%s', 'now', '-1 hour') AS INTEGER)
+             WHERE id = 'w1'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(workspace_time(&conn, "w1"), 300);
+
+        // Resetting now zeroes the workspace without touching the log rows.
+        conn.execute(
+            "UPDATE workspaces
+             SET timer_reset_at = CAST(strftime('%s', 'now') AS INTEGER)
+             WHERE id = 'w1'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(workspace_time(&conn, "w1"), 0);
+        let kept: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM timer_logs WHERE workspace_id = 'w1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(kept, 2);
     }
 
     #[test]
