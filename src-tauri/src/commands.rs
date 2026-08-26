@@ -1879,6 +1879,43 @@ fn insert_task(tx: &rusqlite::Transaction, task: &Task) -> Result<(), String> {
     .map_err(|e| format!("failed to import task '{}': {e}", task.title))
 }
 
+/// Retains only the entries `keep` accepts, logging how many were discarded.
+fn drop_orphans<T>(items: &mut Vec<T>, label: &str, keep: impl Fn(&T) -> bool) {
+    let before = items.len();
+    items.retain(keep);
+    let dropped = before - items.len();
+    if dropped > 0 {
+        log::warn!("Import skipped {dropped} orphaned {label} (workspace no longer in the backup)");
+    }
+}
+
+/// Discards rows whose `workspace_id` has no matching workspace in the same
+/// backup. Legacy exports can carry ghost records left behind by a deleted
+/// workspace, and inserting one trips a foreign key constraint that would roll
+/// back the entire import — dropping them lets the rest of the data through.
+fn drop_orphaned_rows(payload: &mut BackupPayload) {
+    let valid_ws_ids: HashSet<String> = payload.workspaces.iter().map(|w| w.id.clone()).collect();
+
+    drop_orphans(&mut payload.resources, "resources", |r| {
+        valid_ws_ids.contains(&r.workspace_id)
+    });
+    drop_orphans(&mut payload.timer_logs, "timer entries", |t| {
+        valid_ws_ids.contains(&t.workspace_id)
+    });
+    drop_orphans(&mut payload.tasks, "tasks", |t| {
+        valid_ws_ids.contains(&t.workspace_id)
+    });
+    drop_orphans(&mut payload.workspace_env_vars, "variables", |v| {
+        valid_ws_ids.contains(&v.workspace_id)
+    });
+    // A script with no workspace_id is a global script and always valid.
+    drop_orphans(&mut payload.automation_scripts, "scripts", |s| {
+        s.workspace_id
+            .as_deref()
+            .is_none_or(|id| valid_ws_ids.contains(id))
+    });
+}
+
 fn insert_env_var(tx: &rusqlite::Transaction, var: &EnvVar) -> Result<(), String> {
     tx.execute(
         "INSERT INTO workspace_env_vars (id, workspace_id, env_key, env_value)
@@ -1900,7 +1937,7 @@ pub async fn import_data(db: State<'_, Db>, json_payload: String) -> Result<(), 
     spawn_blocking(move || {
         // Parsing happens here on the blocking thread pool so a large file
         // can never stall the async runtime or the UI.
-        let payload: BackupPayload =
+        let mut payload: BackupPayload =
             serde_json::from_str(&json_payload).map_err(|e| format!("Invalid backup file: {e}"))?;
 
         if payload.version != BACKUP_VERSION && payload.version != BACKUP_VERSION + 1 {
@@ -1911,51 +1948,7 @@ pub async fn import_data(db: State<'_, Db>, json_payload: String) -> Result<(), 
             ));
         }
 
-        let known_workspaces: HashSet<&str> =
-            payload.workspaces.iter().map(|w| w.id.as_str()).collect();
-
-        for resource in &payload.resources {
-            if !known_workspaces.contains(resource.workspace_id.as_str()) {
-                return Err(format!(
-                    "Backup is inconsistent: resource '{}' references an unknown workspace",
-                    resource.title
-                ));
-            }
-        }
-        for script in &payload.automation_scripts {
-            if let Some(ws_id) = &script.workspace_id {
-                if !known_workspaces.contains(ws_id.as_str()) {
-                    return Err(format!(
-                        "Backup is inconsistent: script '{}' references an unknown workspace",
-                        script.title
-                    ));
-                }
-            }
-        }
-        for timer in &payload.timer_logs {
-            if !known_workspaces.contains(timer.workspace_id.as_str()) {
-                return Err(
-                    "Backup is inconsistent: a timer entry references an unknown workspace"
-                        .to_string(),
-                );
-            }
-        }
-        for task in &payload.tasks {
-            if !known_workspaces.contains(task.workspace_id.as_str()) {
-                return Err(format!(
-                    "Backup is inconsistent: task '{}' references an unknown workspace",
-                    task.title
-                ));
-            }
-        }
-        for env_var in &payload.workspace_env_vars {
-            if !known_workspaces.contains(env_var.workspace_id.as_str()) {
-                return Err(format!(
-                    "Backup is inconsistent: variable '{}' references an unknown workspace",
-                    env_var.env_key
-                ));
-            }
-        }
+        drop_orphaned_rows(&mut payload);
 
         let mut guard = lock_db(&conn)?;
         let tx = guard
@@ -2374,6 +2367,126 @@ mod tests {
             )
             .unwrap();
         assert_eq!(kept, 2);
+    }
+
+    /// A legacy-shaped backup: one real workspace plus ghost rows of every
+    /// kind pointing at a workspace that was deleted before the export.
+    const BACKUP_WITH_ORPHANS: &str = r#"{
+        "version": 2,
+        "exportedAt": "2026-01-01 00:00:00",
+        "workspaces": [
+            {"id":"w1","name":"Work","color":null,"icon":null,
+             "sortOrder":0,"createdAt":"2026-01-01 00:00:00"}
+        ],
+        "resources": [
+            {"id":"r1","workspaceId":"w1","type":"link","title":"Keep",
+             "targetPath":"https://example.com","preferredApp":"default",
+             "profileName":null,"sortOrder":0,"createdAt":"2026-01-01 00:00:00"},
+            {"id":"r2","workspaceId":"gone","type":"link","title":"Ghost",
+             "targetPath":"https://example.com","preferredApp":"default",
+             "profileName":null,"sortOrder":0,"createdAt":"2026-01-01 00:00:00"}
+        ],
+        "automationScripts": [
+            {"id":"s1","workspaceId":null,"title":"Global","scriptType":"cmd",
+             "scriptContent":"echo hi","sortOrder":0,"createdAt":"2026-01-01 00:00:00"},
+            {"id":"s2","workspaceId":"w1","title":"Scoped","scriptType":"cmd",
+             "scriptContent":"echo hi","sortOrder":0,"createdAt":"2026-01-01 00:00:00"},
+            {"id":"s3","workspaceId":"gone","title":"Ghost","scriptType":"cmd",
+             "scriptContent":"echo hi","sortOrder":0,"createdAt":"2026-01-01 00:00:00"}
+        ],
+        "timerLogs": [
+            {"id":"t1","workspaceId":"w1","durationSeconds":60,"sessionType":"stopwatch",
+             "startedAt":"2026-01-01 00:00:00","endedAt":"2026-01-01 00:01:00"},
+            {"id":"t2","workspaceId":"gone","durationSeconds":60,"sessionType":"stopwatch",
+             "startedAt":"2026-01-01 00:00:00","endedAt":"2026-01-01 00:01:00"}
+        ],
+        "tasks": [
+            {"id":"k1","workspaceId":"w1","title":"Keep","isCompleted":false,
+             "createdAt":"2026-01-01 00:00:00"},
+            {"id":"k2","workspaceId":"gone","title":"Ghost","isCompleted":false,
+             "createdAt":"2026-01-01 00:00:00"}
+        ],
+        "workspaceEnvVars": [
+            {"id":"e1","workspaceId":"w1","envKey":"KEEP","envValue":"1"},
+            {"id":"e2","workspaceId":"gone","envKey":"GHOST","envValue":"1"}
+        ]
+    }"#;
+
+    #[test]
+    fn import_drops_rows_referencing_missing_workspaces() {
+        let mut payload: BackupPayload = serde_json::from_str(BACKUP_WITH_ORPHANS).unwrap();
+        drop_orphaned_rows(&mut payload);
+
+        assert_eq!(payload.workspaces.len(), 1);
+        let ids = |v: Vec<String>| v;
+        assert_eq!(
+            ids(payload.resources.iter().map(|r| r.id.clone()).collect()),
+            ["r1"]
+        );
+        assert_eq!(
+            ids(payload.timer_logs.iter().map(|t| t.id.clone()).collect()),
+            ["t1"]
+        );
+        assert_eq!(
+            ids(payload.tasks.iter().map(|t| t.id.clone()).collect()),
+            ["k1"]
+        );
+        assert_eq!(
+            ids(payload
+                .workspace_env_vars
+                .iter()
+                .map(|v| v.id.clone())
+                .collect()),
+            ["e1"]
+        );
+        // Global scripts survive alongside the workspace-scoped one.
+        assert_eq!(
+            ids(payload
+                .automation_scripts
+                .iter()
+                .map(|s| s.id.clone())
+                .collect()),
+            ["s1", "s2"]
+        );
+    }
+
+    #[test]
+    fn filtered_backup_imports_without_violating_foreign_keys() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        crate::db::init_schema(&conn).unwrap();
+
+        let mut payload: BackupPayload = serde_json::from_str(BACKUP_WITH_ORPHANS).unwrap();
+        drop_orphaned_rows(&mut payload);
+
+        let mut conn = conn;
+        let tx = conn.transaction().unwrap();
+        for w in &payload.workspaces {
+            insert_workspace(&tx, w).unwrap();
+        }
+        for r in &payload.resources {
+            insert_resource(&tx, r).unwrap();
+        }
+        for s in &payload.automation_scripts {
+            insert_script(&tx, s).unwrap();
+        }
+        for t in &payload.timer_logs {
+            insert_timer_log(&tx, t).unwrap();
+        }
+        for t in &payload.tasks {
+            insert_task(&tx, t).unwrap();
+        }
+        for v in &payload.workspace_env_vars {
+            insert_env_var(&tx, v).unwrap();
+        }
+        tx.commit().unwrap();
+
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |row| row.get(0)).unwrap() };
+        assert_eq!(count("SELECT COUNT(*) FROM resources"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM automation_scripts"), 2);
+        assert_eq!(count("SELECT COUNT(*) FROM timer_logs"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM tasks"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM workspace_env_vars"), 1);
     }
 
     #[test]

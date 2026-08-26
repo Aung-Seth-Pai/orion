@@ -1,15 +1,30 @@
-
 # Orion 🚀
 
-Orion is a background productivity cockpit and environment manager. It runs silently in your system tray and provides instant access to your workspaces, local environments, and automation scripts via a global Spotlight-style search.
+**A Context-Switching & Focus Workspace for Windows.**
+
+Orion is a zero-friction, single-context workspace launcher that instantly loads your project’s essential resources, notes, and focus timer—eliminating tab clutter and keeping you locked into one task at a time.
+
+It lives in your system tray. Press `Ctrl + Shift + O`, type a project name, and you are in: the right folders, the right docs, the right scripts, and a running timer. Nothing else competing for your attention.
 
 ## ✨ Key Features
 
-* **Global Quick Search:** Press `Ctrl + Shift + O` from anywhere in Windows to instantly search and launch your projects.
-* **Multi-Language Automation:** Write and execute PowerShell, CMD, Node.js, Python, and WSL Bash scripts directly from the UI.
-* **Environment Variable Injection:** Store workspace-specific secrets (like API keys or database URIs) that get securely injected into your scripts at runtime.
-* **Workspace Timers:** Independent Pomodoro and stopwatch timers for every workspace, with native OS notifications.
-* **Data Portability:** 100% local SQLite storage. Export and import your entire setup with a single JSON backup file.
+* **Global Quick Search:** Press `Ctrl + Shift + O` from anywhere in Windows to search and launch instantly. Narrow the results with slash command scoping — `/ws` for workspaces, `/link` for links, `/folder` for folders, and `/script` for automation scripts.
+* **Multi-Language Automation:** Write and execute PowerShell, CMD, Node.js, Python, and WSL Bash scripts directly from the UI, with per-workspace interpreter overrides.
+* **Focus Analytics:** Independent Pomodoro and stopwatch timers per workspace that keep running while you work elsewhere in the app, native OS notification banners on completion, and resettable **Total Time** tracking so you can measure a sprint without losing your history.
+* **Environment Variable Injection:** Store workspace-specific secrets (API keys, database URIs) that are injected into your scripts at runtime — including across the WSL boundary.
+* **Local-First & High Performance:** Built on **Tauri v2 + Rust + SQLite** rather than Electron. Roughly a **40–80 MB idle RAM footprint**, **sub-millisecond queries** against an on-disk database, and total data sovereignty.
+* **Data Portability:** Your entire setup exports to a single JSON file and imports back on any machine.
+
+## ⚡ Why Not Electron?
+
+|                      | Orion                                | Typical Electron app       |
+| -------------------- | ------------------------------------ | -------------------------- |
+| **Runtime**    | Native WebView2 (already on Windows) | Bundled Chromium           |
+| **Idle RAM**   | ~40–80 MB                           | 300 MB+                    |
+| **Data layer** | Embedded SQLite, sub-ms queries      | Cloud API or bundled DB    |
+| **Your data**  | Stays in`%APPDATA%`, always        | Usually synced to a vendor |
+
+No accounts. No telemetry. No cloud sync. The only network request Orion ever makes is the update check you trigger yourself from Settings — everything else works fully offline, forever.
 
 ## 📦 Installation (Beta)
 
@@ -21,7 +36,11 @@ Orion is a background productivity cockpit and environment manager. It runs sile
 
 ## 🛠️ Usage Quickstart
 
-1. **Create a Workspace:** Set up a dedicated area for a project.
-2. **Add Resources:** Link your local folders, API documentation, or GitHub repos. Use the quick-launch icons to open them directly in your terminal or IDE.
-3. **Write a Script:** Automate your data pipelines or environment setups.
-4. **Hide the App:** Close the window. It will stay running in the background. Press `Ctrl + Shift + O` to summon it instantly.
+1. **Create a Workspace:** Set up a dedicated area for a single project — this is your one context.
+2. **Add Resources:** Link your local folders, API documentation, or GitHub repos. Use the quick-launch icons to open a folder directly in your terminal or IDE.
+3. **Track Your Tasks:** Keep the project's working checklist in the workspace instead of a scratch file you will lose.
+4. **Start the Timer:** Run a stopwatch or a Pomodoro. Sessions are logged per workspace and roll up into Total Time, which you can reset whenever a new sprint starts.
+5. **Write a Script:** Automate your data pipelines or environment setups.
+6. **Hide the App:** Close the window. It keeps running in the background. Press `Ctrl + Shift + O` to summon it instantly.
+
+Built with [Tauri v2](https://tauri.app), Rust, React, and SQLite.
