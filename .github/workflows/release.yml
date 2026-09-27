@@ -32,6 +32,24 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      # Read from a file rather than inlined here, so the notes can be written
+      # with the release they describe instead of editing the workflow each time.
+      # The heredoc form is required: the notes are multi-line, and a bare
+      # assignment would truncate at the first newline.
+      - name: Load release notes
+        id: notes
+        shell: bash
+        run: |
+          if [ -f RELEASE_NOTES.md ]; then
+            {
+              echo 'body<<ORION_NOTES_EOF'
+              cat RELEASE_NOTES.md
+              echo 'ORION_NOTES_EOF'
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "body=Orion release. Download the .exe below to install." >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and Release Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -41,6 +59,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Orion ${{ github.ref_name }}"
-          releaseBody: "Orion beta release. Download the .exe below to install."
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
