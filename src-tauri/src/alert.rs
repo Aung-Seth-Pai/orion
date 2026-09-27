@@ -38,6 +38,36 @@ pub struct PendingAlert(pub Mutex<Option<AlertPayload>>);
 const ALERT_WINDOW: &str = "alert";
 const MAX_ALERT_CHARS: usize = 200;
 
+/// Parks the alert in the bottom-right of the work area, where Windows puts its
+/// own toasts, instead of wherever the window happened to be created.
+///
+/// Positioned on every show rather than once, because the monitor it should
+/// appear on can change between alerts and the work area moves with the
+/// taskbar. Physical pixels throughout, which is what both `work_area` and
+/// `outer_size` report.
+fn park_bottom_right(window: &tauri::WebviewWindow) {
+    /// Gap from the screen edges, in logical pixels, matching the inset Windows
+    /// leaves around its own notifications.
+    const MARGIN: f64 = 12.0;
+
+    let Ok(Some(monitor)) = window.current_monitor().or_else(|_| window.primary_monitor()) else {
+        return;
+    };
+    let Ok(size) = window.outer_size() else {
+        return;
+    };
+
+    let work = monitor.work_area();
+    let margin = (MARGIN * monitor.scale_factor()) as i32;
+
+    let x = work.position.x + work.size.width as i32 - size.width as i32 - margin;
+    let y = work.position.y + work.size.height as i32 - size.height as i32 - margin;
+
+    if let Err(e) = window.set_position(tauri::PhysicalPosition::new(x, y)) {
+        log::warn!("Could not position the alert window: {e}");
+    }
+}
+
 /// Shows the alert window with `title`/`body`.
 ///
 /// Unlike the toast path this reports failure, because it is the notification
@@ -75,6 +105,9 @@ pub async fn show_timer_alert(app: AppHandle, title: String, body: String) -> Re
     // Emitted as well as stored: a window that is already open and showing a
     // previous alert needs to swap its contents, not re-mount.
     let _ = window.emit("orion-timer-alert", &payload);
+
+    // Before showing, so it never appears in one place and jumps to another.
+    park_bottom_right(&window);
 
     window
         .show()

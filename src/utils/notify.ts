@@ -7,8 +7,12 @@ import {
 /**
  * Brief two-tone beep via the Web Audio API. Audible confirmation that does not
  * depend on the OS notification stack at all.
+ *
+ * Played from the main window rather than the alert window: the alert has never
+ * received a user gesture, so its AudioContext would start suspended and produce
+ * nothing.
  */
-function playBeep(): void {
+export function playBeep(): void {
   try {
     const AudioCtx =
       window.AudioContext ??
@@ -104,7 +108,7 @@ export async function showTimerAlert(
  */
 export async function notifyPomodoroComplete(): Promise<string | null> {
   const title = "Pomodoro Complete";
-  const body = "Session logged. Time for a short break!";
+  const body = "Session logged — take a break";
 
   playBeep();
 

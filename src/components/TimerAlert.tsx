@@ -5,13 +5,19 @@ import { listen } from "@tauri-apps/api/event";
 import type { AlertPayload } from "../types";
 
 /** How long an alert stays up before dismissing itself. */
-const AUTO_DISMISS_MS = 10_000;
+const AUTO_DISMISS_MS = 8_000;
 
 /**
- * Orion's own timer notification, rendered in a frameless always-on-top
- * window. This exists because a Windows toast can be delivered and still never
- * appear — suppressed by Focus Assist or a per-app setting, with no way for the
- * app to detect it. A window Orion owns cannot be suppressed that way.
+ * Orion's own timer notification: a compact bar parked where Windows puts its
+ * toasts.
+ *
+ * It exists because a Windows toast can be delivered and still never appear —
+ * suppressed by Focus Assist or a per-app setting, with no way for the app to
+ * detect it. A window Orion owns cannot be suppressed that way.
+ *
+ * Kept to one line deliberately. This interrupts whatever the user is doing, so
+ * it has to be readable at a glance and gone again; a large card in the corner
+ * of the screen reads as a problem to deal with rather than a nudge.
  */
 export default function TimerAlert() {
   const [alert, setAlert] = useState<AlertPayload | null>(null);
@@ -23,7 +29,7 @@ export default function TimerAlert() {
 
   // index.html and index.css give html/body an opaque zinc background, which is
   // right for every other window but would put a dark square behind this one's
-  // rounded card. All windows share one document, so the override has to happen
+  // rounded bar. All windows share one document, so the override has to happen
   // here at runtime rather than in the stylesheet.
   useEffect(() => {
     const { documentElement, body } = document;
@@ -79,19 +85,17 @@ export default function TimerAlert() {
     <div
       onClick={dismiss}
       title="Click to dismiss"
-      className="flex h-full w-full cursor-default items-start gap-3 rounded-xl border border-emerald-500/40 bg-zinc-900/95 p-4 shadow-2xl shadow-black/60 backdrop-blur"
+      className="group flex h-full w-full cursor-default items-center gap-2.5 rounded-lg border border-zinc-700/80 bg-zinc-900/95 px-3 shadow-lg shadow-black/50 backdrop-blur"
     >
-      <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
-        <CheckCircle2 size={17} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-[13px] font-semibold text-zinc-100">
+      <CheckCircle2 size={15} className="shrink-0 text-emerald-400" />
+
+      <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
+        <span className="shrink-0 text-xs font-semibold text-zinc-100">
           {alert.title}
-        </p>
-        <p className="mt-1 text-xs leading-relaxed text-zinc-400">
-          {alert.body}
-        </p>
+        </span>
+        <span className="truncate text-[11px] text-zinc-400">{alert.body}</span>
       </div>
+
       <span
         role="button"
         tabIndex={-1}
@@ -99,9 +103,10 @@ export default function TimerAlert() {
           e.stopPropagation();
           dismiss();
         }}
-        className="-mt-1 -mr-1 shrink-0 rounded p-1 text-zinc-600 transition-colors hover:text-zinc-300"
+        title="Dismiss"
+        className="shrink-0 rounded p-0.5 text-zinc-600 opacity-0 transition-opacity group-hover:opacity-100 hover:text-zinc-300"
       >
-        <X size={14} />
+        <X size={13} />
       </span>
     </div>
   );

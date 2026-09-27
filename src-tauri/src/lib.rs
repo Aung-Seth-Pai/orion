@@ -175,12 +175,15 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         // Remembers the main window's size and position between runs.
-        // Spotlight is excluded deliberately: it is frameless, non-resizable
-        // and re-centres itself on every show, so saved geometry would only
-        // fight that.
+        //
+        // Only the main window. The other two are frameless helpers that
+        // position themselves on every show, so saved geometry would fight
+        // that — and, worse, the plugin also restores VISIBLE, which overrode
+        // `"visible": false` and left the empty alert window sitting on screen
+        // at startup with no way for the user to make sense of it.
         .plugin(
             tauri_plugin_window_state::Builder::default()
-                .with_denylist(&["spotlight"])
+                .with_denylist(&["spotlight", "alert"])
                 .build(),
         )
         .plugin(tray::init_global_shortcut())
@@ -200,6 +203,13 @@ pub fn run() {
             app.manage(database);
             app.manage(PendingAlert::default());
             tray::setup_tray(app.handle())?;
+
+            // Independently of the denylist above: the alert window must never
+            // be on screen until something raises it, and this is cheap
+            // insurance against any future plugin restoring it again.
+            if let Some(alert_window) = app.get_webview_window("alert") {
+                let _ = alert_window.hide();
+            }
 
             // A stored accelerator can become unregistrable between runs if
             // another application claims it, so fall back rather than start with

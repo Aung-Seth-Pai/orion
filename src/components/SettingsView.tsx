@@ -21,7 +21,7 @@ import {
   updateSetting,
 } from "../api/settings";
 import { getAiStatus, reindexAll } from "../api/ai";
-import { sendNativeToast, showTimerAlert } from "../utils/notify";
+import { playBeep, sendNativeToast, showTimerAlert } from "../utils/notify";
 import ShortcutInput from "./ShortcutInput";
 import type { AiStatus } from "../types";
 
@@ -31,6 +31,12 @@ const PYTHON_PATH_KEY = "python_path";
 const NODE_PATH_KEY = "node_path";
 const POMODORO_MINUTES_KEY = "pomodoro_minutes";
 const SPOTLIGHT_SHORTCUT_KEY = "spotlight_shortcut";
+/**
+ * The notification self-test is a development diagnostic, not something a user
+ * has any reason to run. Vite substitutes this at build time, so the block below
+ * is eliminated from the production bundle rather than merely hidden.
+ */
+const SHOW_NOTIFICATION_DIAGNOSTIC = import.meta.env.DEV;
 const DEFAULT_SPOTLIGHT_SHORTCUT = "CmdOrCtrl+Shift+O";
 const DEFAULT_IDE_FALLBACK = "code";
 const DEFAULT_POMODORO_MINUTES = 25;
@@ -265,6 +271,9 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
     setNotifyReport(null);
     setTestingNotification(true);
     try {
+      // The real completion path beeps too; a test that did not would look
+      // silent and send us chasing the wrong thing.
+      playBeep();
       const [alert, toast] = await Promise.all([
         showTimerAlert("Orion test", "If you can read this, timer alerts work."),
         sendNativeToast("Orion test", "If you can read this, Windows notifications work."),
@@ -561,9 +570,10 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                 />
               </div>
 
+              {SHOW_NOTIFICATION_DIAGNOSTIC && (
               <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
                 <p className="text-[13px] font-medium text-zinc-200">
-                  Timer Notifications
+                  Timer Notifications <span className="text-zinc-600">(dev only)</span>
                 </p>
                 <p className="mt-0.5 mb-2.5 text-xs leading-relaxed text-zinc-500">
                   When a pomodoro finishes, Orion shows its own pop-up window so
@@ -635,7 +645,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                   </div>
                 )}
               </div>
-
+              )}
 
               <p className="px-1 pt-1 text-[10px] text-zinc-600">
                 Autostart is applied immediately via the Windows registry.

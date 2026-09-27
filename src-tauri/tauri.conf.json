@@ -21,7 +21,8 @@
         "minHeight": 560,
         "resizable": true,
         "center": true,
-        "visible": false
+        "visible": false,
+        "dragDropEnabled": false
       },
       {
         "label": "spotlight",
@@ -33,13 +34,14 @@
         "decorations": false,
         "visible": false,
         "alwaysOnTop": true,
-        "skipTaskbar": true
+        "skipTaskbar": true,
+        "dragDropEnabled": false
       },
       {
         "label": "alert",
         "title": "Orion Alert",
-        "width": 360,
-        "height": 132,
+        "width": 344,
+        "height": 58,
         "resizable": false,
         "transparent": true,
         "decorations": false,
