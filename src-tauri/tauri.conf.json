@@ -40,7 +40,7 @@
       {
         "label": "alert",
         "title": "Orion Alert",
-        "width": 344,
+        "width": 420,
         "height": 58,
         "resizable": false,
         "transparent": true,

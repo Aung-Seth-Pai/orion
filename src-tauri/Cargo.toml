@@ -56,3 +56,28 @@ codegen-units = 1
 lto = true
 opt-level = "s"
 strip = true
+
+# The app is built for size (opt-level = "s"), which is right for UI and SQL
+# code but throttles the embedding maths: at "s" a rebuild of a ~90-item library
+# takes ~16s, almost all of it in matrix multiplication. These few crates are the
+# hot path, so they are compiled for speed instead. It costs a little binary size
+# in exchange for a large speedup, and only applies to dependencies — Orion's own
+# code stays optimised for size.
+[profile.release.package.candle-core]
+opt-level = 3
+[profile.release.package.candle-nn]
+opt-level = 3
+[profile.release.package.candle-transformers]
+opt-level = 3
+[profile.release.package.gemm]
+opt-level = 3
+[profile.release.package.gemm-common]
+opt-level = 3
+[profile.release.package.gemm-f32]
+opt-level = 3
+[profile.release.package.gemm-f16]
+opt-level = 3
+[profile.release.package.pulp]
+opt-level = 3
+[profile.release.package.half]
+opt-level = 3

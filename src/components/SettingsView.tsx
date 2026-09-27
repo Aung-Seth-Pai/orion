@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
-  BellRing,
   Check,
   Download,
   FolderOpen,
@@ -23,7 +22,6 @@ import {
   updateSetting,
 } from "../api/settings";
 import { getAiStatus, reindexAll, removeAiModel } from "../api/ai";
-import { playBeep, sendNativeToast, showTimerAlert } from "../utils/notify";
 import ShortcutInput from "./ShortcutInput";
 import type { AiStatus } from "../types";
 
@@ -33,12 +31,6 @@ const PYTHON_PATH_KEY = "python_path";
 const NODE_PATH_KEY = "node_path";
 const POMODORO_MINUTES_KEY = "pomodoro_minutes";
 const SPOTLIGHT_SHORTCUT_KEY = "spotlight_shortcut";
-/**
- * The notification self-test is a development diagnostic, not something a user
- * has any reason to run. Vite substitutes this at build time, so the block below
- * is eliminated from the production bundle rather than merely hidden.
- */
-const SHOW_NOTIFICATION_DIAGNOSTIC = import.meta.env.DEV;
 const DEFAULT_SPOTLIGHT_SHORTCUT = "CmdOrCtrl+Shift+O";
 const DEFAULT_IDE_FALLBACK = "code";
 const DEFAULT_POMODORO_MINUTES = 25;
@@ -200,13 +192,6 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
   const [spotlightShortcut, setSpotlightShortcutState] = useState(
     DEFAULT_SPOTLIGHT_SHORTCUT
   );
-  const [testingNotification, setTestingNotification] = useState(false);
-  // null in a field means "that channel worked"; a string is its failure reason.
-  const [notifyReport, setNotifyReport] = useState<{
-    alert: string | null;
-    toast: string | null;
-  } | null>(null);
-
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
   const [buildingIndex, setBuildingIndex] = useState(false);
   const [removingModel, setRemovingModel] = useState(false);
@@ -265,27 +250,6 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
     },
     [onError]
   );
-
-  /// Fires both notification channels and reports each independently, so a
-  /// silent timer can be attributed to the right one instead of guessed at.
-  const handleTestNotification = useCallback(async () => {
-    if (testingNotification) return;
-    onError(null);
-    setNotifyReport(null);
-    setTestingNotification(true);
-    try {
-      // The real completion path beeps too; a test that did not would look
-      // silent and send us chasing the wrong thing.
-      playBeep();
-      const [alert, toast] = await Promise.all([
-        showTimerAlert("Orion test", "If you can read this, timer alerts work."),
-        sendNativeToast("Orion test", "If you can read this, Windows notifications work."),
-      ]);
-      setNotifyReport({ alert, toast });
-    } finally {
-      setTestingNotification(false);
-    }
-  }, [testingNotification, onError]);
 
   const refreshAiStatus = useCallback(() => {
     getAiStatus()
@@ -442,7 +406,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
       // An import replaces the whole database, which clears the vector index
       // with it. Say so here rather than letting /ai come back empty later.
       setStatusMessage(
-        "Backup imported successfully. If you use semantic search, rebuild the index in the AI Search tab."
+        "Backup imported successfully. If you use semantic search, go to the AI Search tab and rebuild the index — an import clears it."
       );
       onDataReplaced();
     } catch (e) {
@@ -597,83 +561,6 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                 />
               </div>
 
-              {SHOW_NOTIFICATION_DIAGNOSTIC && (
-              <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
-                <p className="text-[13px] font-medium text-zinc-200">
-                  Timer Notifications <span className="text-zinc-600">(dev only)</span>
-                </p>
-                <p className="mt-0.5 mb-2.5 text-xs leading-relaxed text-zinc-500">
-                  When a pomodoro finishes, Orion shows its own pop-up window so
-                  it cannot be hidden by Windows notification settings, and also
-                  sends a Windows notification so it lands in your notification
-                  centre. Send a test to check both.
-                </p>
-                <button
-                  onClick={() => void handleTestNotification()}
-                  disabled={testingNotification}
-                  className="flex items-center gap-1.5 rounded border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors enabled:hover:border-zinc-600 enabled:hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {testingNotification ? (
-                    <Loader2 size={13} className="animate-spin" />
-                  ) : (
-                    <BellRing size={13} />
-                  )}
-                  Send test notification
-                </button>
-
-                {notifyReport && (
-                  <div className="mt-2.5 space-y-1.5 text-xs leading-relaxed">
-                    <p
-                      className={
-                        notifyReport.alert === null
-                          ? "flex items-start gap-1.5 text-emerald-400"
-                          : "flex items-start gap-1.5 text-red-400"
-                      }
-                    >
-                      {notifyReport.alert === null ? (
-                        <Check size={13} className="mt-0.5 shrink-0" />
-                      ) : (
-                        <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-                      )}
-                      <span>
-                        {notifyReport.alert === null
-                          ? "Orion pop-up shown."
-                          : `Orion pop-up failed: ${notifyReport.alert}`}
-                      </span>
-                    </p>
-                    <p
-                      className={
-                        notifyReport.toast === null
-                          ? "flex items-start gap-1.5 text-emerald-400"
-                          : "flex items-start gap-1.5 text-amber-300"
-                      }
-                    >
-                      {notifyReport.toast === null ? (
-                        <Check size={13} className="mt-0.5 shrink-0" />
-                      ) : (
-                        <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-                      )}
-                      <span>
-                        {notifyReport.toast === null
-                          ? "Windows accepted the notification."
-                          : `Windows notification failed: ${notifyReport.toast}`}
-                      </span>
-                    </p>
-                    {notifyReport.toast === null && (
-                      <p className="text-zinc-500">
-                        If you heard a sound but saw no Windows banner, the
-                        notification was delivered and only the banner is
-                        suppressed. Check Windows Settings &rarr; System &rarr;
-                        Notifications &rarr; Orion, and press Win+N to see
-                        whether it is waiting in the notification centre. The
-                        Orion pop-up above is unaffected by those settings.
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-              )}
-
               <p className="px-1 pt-1 text-[10px] text-zinc-600">
                 Autostart is applied immediately via the Windows registry.
               </p>
@@ -791,8 +678,12 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                     disabled={buildingIndex || removingModel || aiStatus === null}
                   className="flex items-center gap-1.5 rounded bg-indigo-500/90 px-3 py-1.5 text-xs font-medium text-white transition-colors enabled:hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
+                  {/* Fetching ~90 MB and re-embedding what is already local
+                      are different actions and should not share an icon. */}
                   {buildingIndex ? (
                     <Loader2 size={13} className="animate-spin" />
+                  ) : aiStatus?.downloaded ? (
+                    <RefreshCw size={13} />
                   ) : (
                     <Download size={13} />
                   )}
@@ -822,9 +713,9 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
 
                 {buildingIndex && (
                   <p className="mt-2.5 text-xs leading-relaxed text-zinc-400">
-                    Downloading the model on first run can take several minutes.
-                    It resumes automatically if the connection drops, and you can
-                    keep using Orion while it works.
+                    {aiStatus?.downloaded
+                      ? "Re-embedding every item. Expect a few seconds per hundred; you can keep using Orion while it works."
+                      : "The one-time ~90 MB download can take several minutes. It resumes automatically if the connection drops, and you can keep using Orion while it works."}
                   </p>
                 )}
                 {aiMessage && !buildingIndex && (
@@ -878,11 +769,20 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                 <p className="text-[13px] font-medium text-zinc-200">
                   Import data
                 </p>
-                <p className="mt-0.5 mb-3 text-xs leading-relaxed text-zinc-500">
-                  Restore from an orion_backup.json file.
+                <p className="mt-0.5 mb-2 text-xs leading-relaxed text-zinc-500">
+                  Restore from an orion_backup.json file. Your workspace,
+                  resource and script ordering is preserved.
                   <span className="text-yellow-500/90">
                     {" "}
                     This replaces all existing data.
+                  </span>
+                </p>
+                <p className="mb-3 flex items-start gap-1.5 text-xs leading-relaxed text-zinc-500">
+                  <Sparkles size={12} className="mt-0.5 shrink-0 text-indigo-400" />
+                  <span>
+                    Using semantic search? An import clears the AI index, so
+                    rebuild it afterwards in the{" "}
+                    <span className="text-zinc-400">AI Search</span> tab.
                   </span>
                 </p>
                 <input

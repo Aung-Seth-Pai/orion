@@ -487,6 +487,64 @@ mod tests {
         assert!(!is_model_downloaded(&empty));
     }
 
+    /// Throughput of the embedding path against a realistic library, so the
+    /// "why is a rebuild slow" question has a number rather than a guess.
+    ///
+    /// Run it in BOTH profiles — the gap between them is the whole point:
+    ///   cargo test --lib -- --ignored embedding_throughput --nocapture
+    ///   cargo test --release --lib -- --ignored embedding_throughput --nocapture
+    #[test]
+    #[ignore = "requires the downloaded model; a benchmark, not an assertion"]
+    fn embedding_throughput() {
+        let dir = std::env::temp_dir().join("orion-model-test");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(ensure_model_downloaded(&dir)).unwrap();
+
+        // 12 workspaces of 6 resources plus a few scripts: the shape of a real
+        // library, and the text lengths the CRUD hooks actually embed.
+        let mut corpus: Vec<String> = Vec::new();
+        for w in 0..12 {
+            corpus.push(format!("Workspace number {w}"));
+            for r in 0..6 {
+                corpus.push(format!(
+                    "Reference document {r} for project {w} https://example.com/docs/{w}/{r}"
+                ));
+            }
+        }
+        for s in 0..8 {
+            corpus.push(format!("Deploy script {s}"));
+        }
+
+        // Warm the lazily-loaded model so the figure measures inference, not the
+        // one-off cost of mapping the weights.
+        let load_start = std::time::Instant::now();
+        generate_embedding(&dir, "warm up").unwrap();
+        let load = load_start.elapsed();
+
+        let start = std::time::Instant::now();
+        for text in &corpus {
+            generate_embedding(&dir, text).unwrap();
+        }
+        let elapsed = start.elapsed();
+
+        let profile = if cfg!(debug_assertions) {
+            "DEBUG (unoptimized)"
+        } else {
+            "RELEASE (optimized)"
+        };
+        println!(
+            "\n  profile      : {profile}\n  \
+               model load   : {:.2?}\n  \
+               items        : {}\n  \
+               total        : {:.2?}\n  \
+               per item     : {:.1?}\n",
+            load,
+            corpus.len(),
+            elapsed,
+            elapsed / corpus.len() as u32
+        );
+    }
+
     /// End-to-end check against the real weights. Ignored by default because it
     /// downloads ~90 MB on a cold cache; run it deliberately with
     /// `cargo test -- --ignored --nocapture` after touching anything in the
