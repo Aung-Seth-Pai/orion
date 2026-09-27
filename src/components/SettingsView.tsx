@@ -8,9 +8,11 @@ import {
   Loader2,
   RefreshCw,
   Sparkles,
+  Trash2,
   Upload,
   X,
 } from "lucide-react";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { check } from "@tauri-apps/plugin-updater";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -20,7 +22,7 @@ import {
   setSpotlightShortcut,
   updateSetting,
 } from "../api/settings";
-import { getAiStatus, reindexAll } from "../api/ai";
+import { getAiStatus, reindexAll, removeAiModel } from "../api/ai";
 import { playBeep, sendNativeToast, showTimerAlert } from "../utils/notify";
 import ShortcutInput from "./ShortcutInput";
 import type { AiStatus } from "../types";
@@ -207,6 +209,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
 
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
   const [buildingIndex, setBuildingIndex] = useState(false);
+  const [removingModel, setRemovingModel] = useState(false);
   const [aiMessage, setAiMessage] = useState<string | null>(null);
 
   const [startWithWindows, setStartWithWindows] = useState(false);
@@ -312,6 +315,30 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
       refreshAiStatus();
     }
   }, [buildingIndex, onError, refreshAiStatus]);
+
+  const handleRemoveModel = useCallback(async () => {
+    if (removingModel || buildingIndex) return;
+    const approved = await confirm(
+      "Delete the downloaded model and clear the search index? Your workspaces, links and scripts are not affected, and you can download it again at any time.",
+      { title: "Remove Semantic Search", kind: "warning" }
+    );
+    if (!approved) return;
+
+    onError(null);
+    setAiMessage(null);
+    setRemovingModel(true);
+    try {
+      await removeAiModel();
+      setAiMessage(
+        "Model removed and index cleared. The memory it was using is released when you next restart Orion."
+      );
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setRemovingModel(false);
+      refreshAiStatus();
+    }
+  }, [removingModel, buildingIndex, onError, refreshAiStatus]);
 
   const persistIde = useCallback(
     (value: string) =>
@@ -724,6 +751,16 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                     </dd>
                   </div>
                   <div>
+                    <dt className="text-zinc-500">On disk</dt>
+                    <dd className="mt-0.5 font-medium text-zinc-300">
+                      {aiStatus === null
+                        ? "—"
+                        : aiStatus.modelBytes === 0
+                          ? "Nothing cached"
+                          : `${(aiStatus.modelBytes / 1024 / 1024).toFixed(0)} MB`}
+                    </dd>
+                  </div>
+                  <div>
                     <dt className="text-zinc-500">Indexed items</dt>
                     <dd className="mt-0.5 font-medium text-zinc-300">
                       {aiStatus === null
@@ -748,9 +785,10 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                     </p>
                   )}
 
-                <button
-                  onClick={() => void handleBuildIndex()}
-                  disabled={buildingIndex || aiStatus === null}
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={() => void handleBuildIndex()}
+                    disabled={buildingIndex || removingModel || aiStatus === null}
                   className="flex items-center gap-1.5 rounded bg-indigo-500/90 px-3 py-1.5 text-xs font-medium text-white transition-colors enabled:hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {buildingIndex ? (
@@ -763,7 +801,24 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                     : aiStatus?.downloaded
                       ? "Rebuild Index"
                       : "Download Model & Build Index (~90MB)"}
-                </button>
+                  </button>
+
+                  {/* Only offered once there is something to remove. */}
+                  {aiStatus?.downloaded && (
+                    <button
+                      onClick={() => void handleRemoveModel()}
+                      disabled={removingModel || buildingIndex}
+                      className="flex items-center gap-1.5 rounded border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-400 transition-colors enabled:hover:border-red-500/50 enabled:hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {removingModel ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Trash2 size={13} />
+                      )}
+                      Remove model
+                    </button>
+                  )}
+                </div>
 
                 {buildingIndex && (
                   <p className="mt-2.5 text-xs leading-relaxed text-zinc-400">
@@ -787,8 +842,9 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                 <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
                   Only the one-time model download itself. The model then runs
                   locally on your CPU — your workspaces, links, scripts and
-                  search queries are never uploaded anywhere. Deleting Orion's
-                  app data directory removes the downloaded model along with it.
+                  search queries are never uploaded anywhere. Remove model
+                  deletes the downloaded weights and clears the index whenever
+                  you want the space back.
                 </p>
               </div>
             </div>

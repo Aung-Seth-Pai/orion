@@ -77,6 +77,39 @@ fn download_lock() -> &'static tokio::sync::Mutex<()> {
     DOWNLOAD_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
+/// Total bytes the cached model occupies, so the UI can say what removing it
+/// would reclaim. Zero when nothing is cached.
+pub fn model_disk_usage(root: &Path) -> u64 {
+    let dir = model_dir(root);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return 0;
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.metadata().ok())
+        .filter(std::fs::Metadata::is_file)
+        .map(|m| m.len())
+        .sum()
+}
+
+/// Deletes the cached weights, including any half-finished `.part` download.
+///
+/// Note what this cannot undo: [`EMBEDDER`] holds the model in memory once it
+/// has been used, and a `OnceLock` cannot be cleared. That copy stays resident
+/// until the app restarts. It is harmless — every entry point checks
+/// [`is_model_downloaded`] first, so nothing will use it — but the memory is not
+/// reclaimed until then, and the UI says so rather than pretending otherwise.
+pub fn remove_model(root: &Path) -> Result<(), String> {
+    let dir = model_dir(root);
+    if !dir.exists() {
+        return Ok(());
+    }
+    std::fs::remove_dir_all(&dir)
+        .map_err(|e| format!("failed to remove the model directory {}: {e}", dir.display()))?;
+    log::info!("Embedding model removed from {}", dir.display());
+    Ok(())
+}
+
 /// Downloads any missing model file into the model cache directory.
 ///
 /// Safe to call repeatedly and concurrently: callers queue on

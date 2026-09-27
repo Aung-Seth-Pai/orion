@@ -147,6 +147,8 @@ export interface AiStatus {
   indexedCount: number;
   /** How many items exist in total, so a stale index is visible as a mismatch. */
   indexableCount: number;
+  /** Bytes the cached weights occupy, so removal can say what it reclaims. */
+  modelBytes: number;
 }
 
 export interface Task {

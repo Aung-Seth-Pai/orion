@@ -199,6 +199,9 @@ pub struct AiStatus {
     /// How many items exist that *could* be indexed, so the UI can tell a
     /// finished backfill from a stale one.
     pub indexable_count: i64,
+    /// Bytes the cached weights occupy, so the UI can say what removing them
+    /// would reclaim. Zero when nothing is cached.
+    pub model_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -16,7 +16,8 @@ use commands::{
     get_env_vars, get_resources, get_scripts, get_settings, get_tasks,
     get_workspace_time, get_workspaces, import_data, launch_resource, log_timer_session,
     notify_timer_complete, open_log_folder, reindex_all, reorder_resources, reorder_scripts,
-    reorder_workspaces, reset_workspace_time, search_all, set_spotlight_shortcut,
+    remove_ai_model, reorder_workspaces, reset_workspace_time, search_all,
+    set_spotlight_shortcut,
     suggest_resources,
     set_env_var, toggle_autostart, update_resource, update_script, update_setting,
     update_task_status, update_workspace,
@@ -284,7 +285,8 @@ pub fn run() {
             reorder_scripts,
             set_spotlight_shortcut,
             suggest_resources,
-            find_resource_by_target
+            find_resource_by_target,
+            remove_ai_model
         ])
         .run(tauri::generate_context!())
         .expect("error while running orion");

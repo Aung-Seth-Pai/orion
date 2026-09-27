@@ -14,3 +14,12 @@ export function getAiStatus(): Promise<AiStatus> {
 export function reindexAll(): Promise<void> {
   return invoke("reindex_all");
 }
+
+/**
+ * Deletes the downloaded weights and empties the vector index, returning the
+ * app to the state it was in before semantic search was enabled. Removes a
+ * cache, never data — workspaces, resources and scripts are untouched.
+ */
+export function removeAiModel(): Promise<void> {
+  return invoke("remove_ai_model");
+}

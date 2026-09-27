@@ -282,10 +282,41 @@ pub async fn reindex_all(app: AppHandle, db: State<'_, Db>) -> Result<(), String
     .map_err(|e| format!("background task failed: {e}"))?
 }
 
+/// Empties the vector index, leaving every workspace, resource and script
+/// untouched. Only the embeddings go.
+fn clear_vector_index(conn: &rusqlite::Connection) -> Result<(), String> {
+    conn.execute("DELETE FROM vec_items", [])
+        .map_err(|e| format!("failed to clear the semantic index: {e}"))?;
+    Ok(())
+}
+
+/// Deletes the downloaded weights and empties the index, returning the app to
+/// the state it was in before semantic search was ever enabled.
+///
+/// Both halves matter. Leaving the index behind would have Settings report items
+/// as indexed when the embedder needed to query them is gone, and leaving the
+/// weights behind would keep ~90 MB on disk for a feature the user has turned
+/// off. Nothing else is touched: this removes a cache, not data.
+#[tauri::command]
+pub async fn remove_ai_model(app: AppHandle, db: State<'_, Db>) -> Result<(), String> {
+    let dir = model_root_dir(&app)?;
+    crate::ai::remove_model(&dir)?;
+
+    let conn = db.0.clone();
+    spawn_blocking(move || {
+        let guard = lock_db(&conn)?;
+        clear_vector_index(&guard)
+    })
+    .await
+    .map_err(|e| format!("background task failed: {e}"))?
+}
+
 /// Whether semantic search is usable, and how far the index has got.
 #[tauri::command]
 pub async fn get_ai_status(app: AppHandle, db: State<'_, Db>) -> Result<AiStatus, String> {
-    let downloaded = crate::ai::is_model_downloaded(&model_root_dir(&app)?);
+    let dir = model_root_dir(&app)?;
+    let downloaded = crate::ai::is_model_downloaded(&dir);
+    let model_bytes = crate::ai::model_disk_usage(&dir);
     let conn = db.0.clone();
 
     spawn_blocking(move || {
@@ -298,6 +329,7 @@ pub async fn get_ai_status(app: AppHandle, db: State<'_, Db>) -> Result<AiStatus
 
         Ok(AiStatus {
             downloaded,
+            model_bytes,
             indexed_count: count("SELECT COUNT(*) FROM vec_items")?,
             indexable_count: count(
                 "SELECT (SELECT COUNT(*) FROM workspaces)
@@ -3029,8 +3061,7 @@ pub async fn import_data(db: State<'_, Db>, json_payload: String) -> Result<(), 
         // is a virtual table so nothing cascades into it at all). Imported rows
         // are left unindexed here; they pick up vectors as they are edited, or
         // through a re-index pass.
-        tx.execute("DELETE FROM vec_items", [])
-            .map_err(|e| format!("failed to clear the semantic index: {e}"))?;
+        clear_vector_index(&tx)?;
         tx.execute("DELETE FROM workspace_env_vars", [])
             .map_err(|e| format!("failed to clear variables: {e}"))?;
         tx.execute("DELETE FROM tasks", [])
@@ -3720,6 +3751,152 @@ mod tests {
             ["w1a", "w1b"],
             "the workspace's own scripts must be untouched"
         );
+    }
+
+    /// A manual reorder has to survive a backup round trip, or exporting before
+    /// a reinstall silently throws the arrangement away. Every insert_* helper
+    /// must carry sort_order; dropping it from one of those column lists is an
+    /// easy and invisible regression.
+    #[test]
+    fn a_manual_order_survives_export_and_import() {
+        let mut conn = crate::db::open_test_connection();
+        crate::db::init_schema(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO workspaces (id, name, sort_order) VALUES ('a', 'A', 0);
+             INSERT INTO workspaces (id, name, sort_order) VALUES ('b', 'B', 1);
+             INSERT INTO workspaces (id, name, sort_order) VALUES ('c', 'C', 2);
+             INSERT INTO resources (id, workspace_id, type, title, target_path, sort_order)
+                 VALUES ('r1', 'a', 'folder', 'R1', 'C:/1', 0);
+             INSERT INTO resources (id, workspace_id, type, title, target_path, sort_order)
+                 VALUES ('r2', 'a', 'folder', 'R2', 'C:/2', 1);
+             INSERT INTO automation_scripts (id, workspace_id, title, script_type, script_content, sort_order)
+                 VALUES ('s1', 'a', 'S1', 'cmd', 'echo 1', 0);
+             INSERT INTO automation_scripts (id, workspace_id, title, script_type, script_content, sort_order)
+                 VALUES ('s2', 'a', 'S2', 'cmd', 'echo 2', 1);",
+        )
+        .unwrap();
+
+        // Reorder all three lists away from their insertion order.
+        apply_manual_order(
+            &mut conn,
+            "workspaces",
+            "1 = 1",
+            None,
+            &["c".to_string(), "a".to_string(), "b".to_string()],
+        )
+        .unwrap();
+        apply_manual_order(
+            &mut conn,
+            "resources",
+            "workspace_id = ?1",
+            Some("a"),
+            &["r2".to_string(), "r1".to_string()],
+        )
+        .unwrap();
+        apply_manual_order(
+            &mut conn,
+            "automation_scripts",
+            "workspace_id = ?1",
+            Some("a"),
+            &["s2".to_string(), "s1".to_string()],
+        )
+        .unwrap();
+
+        // Export exactly as export_all_data does, through the same column lists.
+        let workspaces: Vec<Workspace> = {
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT {COLUMNS} FROM workspaces ORDER BY sort_order ASC, name COLLATE NOCASE ASC"
+                ))
+                .unwrap();
+            stmt.query_map([], row_to_workspace)
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        let resources: Vec<Resource> = {
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT {RESOURCE_COLUMNS} FROM resources ORDER BY sort_order ASC, rowid ASC"
+                ))
+                .unwrap();
+            stmt.query_map([], row_to_resource)
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        let scripts: Vec<AutomationScript> = {
+            let mut stmt = conn
+                .prepare(&format!(
+                    "SELECT {SCRIPT_COLUMNS} FROM automation_scripts ORDER BY sort_order ASC, rowid ASC"
+                ))
+                .unwrap();
+            stmt.query_map([], row_to_script)
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+
+        // The order has to be carried by the data, not by the query, so assert
+        // the exported sort_order values rather than only the row sequence.
+        assert_eq!(
+            workspaces.iter().map(|w| w.id.as_str()).collect::<Vec<_>>(),
+            ["c", "a", "b"]
+        );
+        assert_eq!(
+            workspaces.iter().map(|w| w.sort_order).collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+
+        // Wipe and re-import through the same helpers import_data uses.
+        conn.execute_batch(
+            "DELETE FROM automation_scripts; DELETE FROM resources; DELETE FROM workspaces;",
+        )
+        .unwrap();
+
+        let tx = conn.transaction().unwrap();
+        for w in &workspaces {
+            insert_workspace(&tx, w).unwrap();
+        }
+        for r in &resources {
+            insert_resource(&tx, r).unwrap();
+        }
+        for s in &scripts {
+            insert_script(&tx, s).unwrap();
+        }
+        tx.commit().unwrap();
+
+        assert_eq!(
+            order_of(&conn, "workspaces", "1 = 1"),
+            ["c", "a", "b"],
+            "the workspace order must come back as it was exported"
+        );
+        assert_eq!(
+            order_of(&conn, "resources", "workspace_id = 'a'"),
+            ["r2", "r1"]
+        );
+        assert_eq!(
+            order_of(&conn, "automation_scripts", "workspace_id = 'a'"),
+            ["s2", "s1"]
+        );
+    }
+
+    /// Removing the model must also empty the index, or the counts in Settings
+    /// would claim items are searchable when the embedder needed to query them
+    /// is gone.
+    #[test]
+    fn removing_the_model_clears_the_index() {
+        let conn = test_db_with_vectors();
+        assert!(!knn_search(&conn, &probe(1.0, 0.0), 10).unwrap().is_empty());
+
+        clear_vector_index(&conn).unwrap();
+
+        assert!(knn_search(&conn, &probe(1.0, 0.0), 10).unwrap().is_empty());
+        // The items themselves are untouched — only their vectors go.
+        let workspaces: i64 = conn
+            .query_row("SELECT COUNT(*) FROM workspaces", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(workspaces, 1, "removing the model must not delete any data");
     }
 
     // --- Local file links -----------------------------------------------------
