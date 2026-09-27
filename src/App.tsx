@@ -349,7 +349,12 @@ function MainShell() {
           ) : settingsOpen ? (
             <SettingsView onError={setError} onDataReplaced={handleDataReplaced} />
           ) : active ? (
-            <ResourcesPanel workspace={active} onError={setError} timer={timer} />
+            <ResourcesPanel
+              workspace={active}
+              onError={setError}
+              timer={timer}
+              onJumpToWorkspace={handleSelect}
+            />
           ) : (
             <div className="flex flex-1 items-center justify-center">
               <div className="flex flex-col items-center gap-3 text-center">

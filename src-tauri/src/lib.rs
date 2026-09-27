@@ -11,11 +11,13 @@ use std::path::PathBuf;
 
 use commands::{
     create_resource, create_script, create_task, create_workspace, delete_env_var, delete_resource,
-    delete_script, delete_task, delete_workspace, execute_script, export_all_data, get_ai_status,
+    delete_script, delete_task, delete_workspace, execute_script, export_all_data,
+    find_resource_by_target, get_ai_status,
     get_env_vars, get_resources, get_scripts, get_settings, get_tasks,
     get_workspace_time, get_workspaces, import_data, launch_resource, log_timer_session,
     notify_timer_complete, open_log_folder, reindex_all, reorder_resources, reorder_scripts,
     reorder_workspaces, reset_workspace_time, search_all, set_spotlight_shortcut,
+    suggest_resources,
     set_env_var, toggle_autostart, update_resource, update_script, update_setting,
     update_task_status, update_workspace,
 };
@@ -270,7 +272,9 @@ pub fn run() {
             reorder_workspaces,
             reorder_resources,
             reorder_scripts,
-            set_spotlight_shortcut
+            set_spotlight_shortcut,
+            suggest_resources,
+            find_resource_by_target
         ])
         .run(tauri::generate_context!())
         .expect("error while running orion");

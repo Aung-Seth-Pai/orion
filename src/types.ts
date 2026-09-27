@@ -112,6 +112,21 @@ export interface SearchResult {
   action: SearchResultAction;
 }
 
+/**
+ * An existing resource offered as a possible duplicate while adding a new one.
+ * Mirrors `models::ResourceSuggestion`.
+ */
+export interface ResourceSuggestion {
+  id: string;
+  type: ResourceType;
+  title: string;
+  targetPath: string;
+  workspaceId: string;
+  workspaceName: string;
+  /** "exact" reads as "you already have this"; the others as a resemblance. */
+  matchKind: "exact" | "keyword" | "semantic";
+}
+
 /** Contents of the always-on-top timer alert window. Mirrors `alert::AlertPayload`. */
 export interface AlertPayload {
   title: string;

@@ -22,4 +22,12 @@ export default defineConfig({
       ignored: ["**/src-tauri/**"],
     },
   },
+  test: {
+    // Components need a DOM; the pure utils do not care either way.
+    environment: "jsdom",
+    globals: true,
+    setupFiles: ["./src/test/setup.ts"],
+    // The Rust suite owns src-tauri, and node_modules is not ours to test.
+    include: ["src/**/*.test.{ts,tsx}"],
+  },
 });

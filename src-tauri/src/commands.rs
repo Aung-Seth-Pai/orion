@@ -15,8 +15,8 @@ use tokio::task::spawn_blocking;
 use crate::db::Db;
 use crate::models::{
     AiStatus, AutomationScript, BackupPayload, EnvVar, NewResource, NewScript, NewTask,
-    NewTimerLog, NewWorkspace, Resource, ResourcePatch, ScriptPatch, SearchResult, Task, TimerLog,
-    Workspace, WorkspacePatch,
+    NewTimerLog, NewWorkspace, Resource, ResourcePatch, ResourceSuggestion, ScriptPatch,
+    SearchResult, Task, TimerLog, Workspace, WorkspacePatch,
 };
 
 enum SqlValue {
@@ -505,6 +505,241 @@ pub async fn delete_workspace(db: State<'_, Db>, id: String) -> Result<bool, Str
             delete_vectors(&guard, &orphaned)?;
         }
         Ok(rows > 0)
+    })
+    .await
+    .map_err(|e| format!("background task failed: {e}"))?
+}
+
+// --- Resource suggestions --------------------------------------------------
+
+/// How many suggestions are worth showing under a text field. More than this is
+/// a list to read rather than a hint to glance at.
+const SUGGESTION_LIMIT: usize = 6;
+
+/// Maximum L2 distance for a semantic suggestion to count as related.
+///
+/// The indexed vectors are unit length, so L2 distance and cosine similarity are
+/// monotonically related and a fixed cut-off is meaningful either way: 1.0
+/// corresponds to a cosine of 0.5. KNN always returns its k nearest neighbours
+/// with no notion of relevance, so without a cut-off every query would suggest
+/// something, however unrelated.
+const SEMANTIC_SUGGESTION_MAX_DISTANCE: f64 = 1.0;
+
+/// Nearest neighbours with their distances, for callers that need to apply a
+/// relevance cut-off rather than take a fixed k.
+fn knn_search_scored(
+    conn: &rusqlite::Connection,
+    blob: &[u8],
+    limit: i64,
+) -> Result<Vec<(String, String, f64)>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT item_id, item_type, distance FROM vec_items
+             WHERE embedding MATCH ?1 AND k = ?2
+             ORDER BY distance",
+        )
+        .map_err(|e| format!("failed to prepare scored vector search: {e}"))?;
+
+    let rows = stmt
+        .query_map(params![blob, limit], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, f64>(2)?,
+            ))
+        })
+        .map_err(|e| format!("failed to execute scored vector search: {e}"))?;
+
+    let mut hits = Vec::new();
+    for row in rows {
+        hits.push(row.map_err(|e| format!("failed to read scored hit: {e}"))?);
+    }
+    Ok(hits)
+}
+
+/// Loads one resource as a suggestion, or None when the id is not a resource.
+fn resource_suggestion_by_id(
+    conn: &rusqlite::Connection,
+    id: &str,
+    match_kind: &str,
+) -> Result<Option<ResourceSuggestion>, String> {
+    use rusqlite::OptionalExtension;
+
+    conn.query_row(
+        "SELECT r.id, r.type, r.title, r.target_path, r.workspace_id, w.name
+         FROM resources r JOIN workspaces w ON w.id = r.workspace_id
+         WHERE r.id = ?1",
+        params![id],
+        |row| {
+            Ok(ResourceSuggestion {
+                id: row.get(0)?,
+                resource_type: row.get(1)?,
+                title: row.get(2)?,
+                target_path: row.get(3)?,
+                workspace_id: row.get(4)?,
+                workspace_name: row.get(5)?,
+                match_kind: match_kind.to_string(),
+            })
+        },
+    )
+    .optional()
+    .map_err(|e| format!("failed to load suggestion: {e}"))
+}
+
+/// Resources whose title or target resembles `term`, across every workspace.
+///
+/// Searching every workspace rather than only the current one is the point: the
+/// question being answered is "have I saved this somewhere already", and the
+/// answer is most useful precisely when it is somewhere else.
+///
+/// Two tiers, so it degrades rather than breaks. The keyword tier always works.
+/// The semantic tier only contributes when the index exists, and never triggers
+/// a model download — typing a title must not start a 90 MB fetch.
+#[tauri::command]
+pub async fn suggest_resources(
+    app: AppHandle,
+    db: State<'_, Db>,
+    term: String,
+) -> Result<Vec<ResourceSuggestion>, String> {
+    let term = term.trim().to_string();
+    // Below two characters everything matches and nothing is a hint.
+    if term.chars().count() < 2 || term.len() > MAX_QUERY_CHARS {
+        return Ok(Vec::new());
+    }
+
+    let model_dir = model_root_dir(&app).ok();
+    let semantic_ready = model_dir
+        .as_deref()
+        .is_some_and(crate::ai::is_model_downloaded);
+
+    let pattern = build_like_pattern(&term);
+    let conn = db.0.clone();
+
+    spawn_blocking(move || {
+        let guard = lock_db(&conn)?;
+
+        let mut suggestions: Vec<ResourceSuggestion> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        // Tier 1: keyword. Always available, and instant.
+        {
+            let mut stmt = guard
+                .prepare(
+                    "SELECT r.id, r.type, r.title, r.target_path, r.workspace_id, w.name
+                     FROM resources r JOIN workspaces w ON w.id = r.workspace_id
+                     WHERE r.title LIKE ?1 ESCAPE '\\' OR r.target_path LIKE ?1 ESCAPE '\\'
+                     ORDER BY r.title COLLATE NOCASE ASC
+                     LIMIT ?2",
+                )
+                .map_err(|e| format!("failed to prepare suggestion query: {e}"))?;
+
+            let rows = stmt
+                .query_map(params![pattern, SUGGESTION_LIMIT as i64], |row| {
+                    Ok(ResourceSuggestion {
+                        id: row.get(0)?,
+                        resource_type: row.get(1)?,
+                        title: row.get(2)?,
+                        target_path: row.get(3)?,
+                        workspace_id: row.get(4)?,
+                        workspace_name: row.get(5)?,
+                        match_kind: "keyword".to_string(),
+                    })
+                })
+                .map_err(|e| format!("failed to query suggestions: {e}"))?;
+
+            for row in rows {
+                let suggestion = row.map_err(|e| format!("failed to read suggestion: {e}"))?;
+                seen.insert(suggestion.id.clone());
+                suggestions.push(suggestion);
+            }
+        }
+
+        // Tier 2: semantic. Catches the cases keyword search cannot — "AWS docs"
+        // against "Amazon Web Services documentation".
+        if semantic_ready && suggestions.len() < SUGGESTION_LIMIT {
+            let dir = model_dir.expect("checked above");
+            match crate::ai::generate_embedding(&dir, &term) {
+                Ok(embedding) => {
+                    let blob = crate::ai::embedding_to_blob(&embedding);
+                    let hits = knn_search_scored(&guard, &blob, SUGGESTION_LIMIT as i64 * 2)?;
+                    for (id, item_type, distance) in hits {
+                        if suggestions.len() >= SUGGESTION_LIMIT {
+                            break;
+                        }
+                        // Workspaces and scripts share the index but are not
+                        // resources, so they cannot be duplicates of one.
+                        if item_type != "link" && item_type != "folder" {
+                            continue;
+                        }
+                        if distance > SEMANTIC_SUGGESTION_MAX_DISTANCE || seen.contains(&id) {
+                            continue;
+                        }
+                        if let Some(found) = resource_suggestion_by_id(&guard, &id, "semantic")? {
+                            seen.insert(found.id.clone());
+                            suggestions.push(found);
+                        }
+                    }
+                }
+                // A suggestion box is a convenience; losing the semantic tier
+                // must not fail the keyword results already gathered.
+                Err(e) => log::warn!("Semantic suggestions unavailable: {e}"),
+            }
+        }
+
+        Ok(suggestions)
+    })
+    .await
+    .map_err(|e| format!("background task failed: {e}"))?
+}
+
+/// The resource that already points at `target`, if any.
+///
+/// Distinct from [`suggest_resources`] because an exact duplicate is a different
+/// statement: not "this looks similar" but "you already have this", which
+/// deserves its own wording. The target is normalised first so a bare path and
+/// the file:// URL it becomes are recognised as the same thing.
+#[tauri::command]
+pub async fn find_resource_by_target(
+    db: State<'_, Db>,
+    resource_type: String,
+    target: String,
+) -> Result<Option<ResourceSuggestion>, String> {
+    let resource_type = resource_type.trim().to_lowercase();
+    let normalised = match normalize_target_path(&resource_type, &target) {
+        Ok(value) => value,
+        // An unnormalisable target cannot match anything stored; the real error
+        // belongs to the save attempt, not to a background duplicate check.
+        Err(_) => return Ok(None),
+    };
+    if normalised.is_empty() {
+        return Ok(None);
+    }
+
+    let conn = db.0.clone();
+    spawn_blocking(move || {
+        use rusqlite::OptionalExtension;
+        let guard = lock_db(&conn)?;
+        guard
+            .query_row(
+                "SELECT r.id, r.type, r.title, r.target_path, r.workspace_id, w.name
+                 FROM resources r JOIN workspaces w ON w.id = r.workspace_id
+                 WHERE r.target_path = ?1 COLLATE NOCASE
+                 LIMIT 1",
+                params![normalised],
+                |row| {
+                    Ok(ResourceSuggestion {
+                        id: row.get(0)?,
+                        resource_type: row.get(1)?,
+                        title: row.get(2)?,
+                        target_path: row.get(3)?,
+                        workspace_id: row.get(4)?,
+                        workspace_name: row.get(5)?,
+                        match_kind: "exact".to_string(),
+                    })
+                },
+            )
+            .optional()
+            .map_err(|e| format!("failed to check for a duplicate: {e}"))
     })
     .await
     .map_err(|e| format!("background task failed: {e}"))?
@@ -3104,6 +3339,220 @@ mod tests {
         );
     }
 
+
+    // --- Resource suggestions -------------------------------------------------
+
+    fn db_with_resources_across_workspaces() -> rusqlite::Connection {
+        let conn = crate::db::open_test_connection();
+        crate::db::init_schema(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO workspaces (id, name) VALUES ('w1', 'Payments');
+             INSERT INTO workspaces (id, name) VALUES ('w2', 'Infra');
+             INSERT INTO resources (id, workspace_id, type, title, target_path)
+                 VALUES ('r1', 'w1', 'link', 'Stripe API docs', 'https://stripe.com/docs');
+             INSERT INTO resources (id, workspace_id, type, title, target_path)
+                 VALUES ('r2', 'w2', 'link', 'Runbook', 'https://wiki.internal/runbook');
+             INSERT INTO resources (id, workspace_id, type, title, target_path)
+                 VALUES ('r3', 'w2', 'link', 'Resume',
+                         'file:///C:/Users/zepha/Downloads/Resume.pdf');",
+        )
+        .unwrap();
+        conn
+    }
+
+    /// Mirrors the keyword tier's query. The value being tested is that a match
+    /// is found regardless of which workspace holds it, and that it carries the
+    /// workspace name — the useful part when the duplicate is somewhere else.
+    fn keyword_suggestions(conn: &rusqlite::Connection, term: &str) -> Vec<ResourceSuggestion> {
+        let pattern = build_like_pattern(term);
+        let mut stmt = conn
+            .prepare(
+                "SELECT r.id, r.type, r.title, r.target_path, r.workspace_id, w.name
+                 FROM resources r JOIN workspaces w ON w.id = r.workspace_id
+                 WHERE r.title LIKE ?1 ESCAPE '\\' OR r.target_path LIKE ?1 ESCAPE '\\'
+                 ORDER BY r.title COLLATE NOCASE ASC
+                 LIMIT ?2",
+            )
+            .unwrap();
+        stmt.query_map(params![pattern, SUGGESTION_LIMIT as i64], |row| {
+            Ok(ResourceSuggestion {
+                id: row.get(0)?,
+                resource_type: row.get(1)?,
+                title: row.get(2)?,
+                target_path: row.get(3)?,
+                workspace_id: row.get(4)?,
+                workspace_name: row.get(5)?,
+                match_kind: "keyword".to_string(),
+            })
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+    }
+
+    #[test]
+    fn suggestions_span_every_workspace_and_name_it() {
+        let conn = db_with_resources_across_workspaces();
+
+        let hits = keyword_suggestions(&conn, "runbook");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].title, "Runbook");
+        // Found from a different workspace than the one being edited, and it
+        // says where it lives.
+        assert_eq!(hits[0].workspace_name, "Infra");
+        assert_eq!(hits[0].match_kind, "keyword");
+    }
+
+    #[test]
+    fn suggestions_match_the_target_as_well_as_the_title() {
+        let conn = db_with_resources_across_workspaces();
+        // Nothing is titled "stripe.com", but a resource points there.
+        let hits = keyword_suggestions(&conn, "stripe.com");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, "r1");
+    }
+
+    #[test]
+    fn suggestions_are_case_insensitive_and_capped() {
+        let conn = db_with_resources_across_workspaces();
+        assert_eq!(keyword_suggestions(&conn, "STRIPE").len(), 1);
+
+        // Every row matches '%e%'; the cap keeps it a hint rather than a list.
+        for i in 0..20 {
+            conn.execute(
+                "INSERT INTO resources (id, workspace_id, type, title, target_path)
+                 VALUES (?1, 'w1', 'link', ?2, 'https://example.com')",
+                params![format!("bulk{i}"), format!("Resource {i}")],
+            )
+            .unwrap();
+        }
+        assert_eq!(keyword_suggestions(&conn, "e").len(), SUGGESTION_LIMIT);
+    }
+
+    /// A one-character term matches nearly everything and tells the user nothing,
+    /// so the command returns early rather than querying.
+    #[test]
+    fn a_too_short_term_is_not_worth_suggesting_on() {
+        for term in ["", " ", "a", " x "] {
+            let trimmed = term.trim();
+            assert!(
+                trimmed.chars().count() < 2,
+                "'{term}' should be below the threshold"
+            );
+        }
+        assert!("ab".chars().count() >= 2, "two characters is enough");
+    }
+
+    /// The duplicate check has to normalise first, or the bare path the user
+    /// pastes would never match the file:// URL it was stored as.
+    #[test]
+    fn an_exact_duplicate_is_found_through_normalisation() {
+        let conn = db_with_resources_across_workspaces();
+
+        let typed = r"C:\Users\zepha\Downloads\Resume.pdf";
+        let normalised = normalize_target_path("link", typed).unwrap();
+        assert_eq!(normalised, "file:///C:/Users/zepha/Downloads/Resume.pdf");
+
+        let found: String = conn
+            .query_row(
+                "SELECT id FROM resources WHERE target_path = ?1 COLLATE NOCASE",
+                params![normalised],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(found, "r3", "the bare path must match the stored URL");
+    }
+
+    #[test]
+    fn a_target_nobody_has_saved_is_not_a_duplicate() {
+        use rusqlite::OptionalExtension;
+        let conn = db_with_resources_across_workspaces();
+
+        let normalised = normalize_target_path("link", "https://example.org/new").unwrap();
+        let found: Option<String> = conn
+            .query_row(
+                "SELECT id FROM resources WHERE target_path = ?1 COLLATE NOCASE",
+                params![normalised],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap();
+        assert!(found.is_none());
+    }
+
+    /// The semantic tier must ignore workspaces and scripts. They share the
+    /// vector index with resources but cannot be duplicates of one, and
+    /// hydrating them as resources would find nothing.
+    #[test]
+    fn only_resource_vectors_can_become_suggestions() {
+        let conn = db_with_resources_across_workspaces();
+        conn.execute(
+            "INSERT INTO automation_scripts (id, workspace_id, title, script_type, script_content)
+             VALUES ('s1', 'w1', 'Deploy', 'cmd', 'echo go')",
+            [],
+        )
+        .unwrap();
+
+        // A workspace and a script are not resources, so they hydrate to None.
+        assert!(resource_suggestion_by_id(&conn, "w1", "semantic")
+            .unwrap()
+            .is_none());
+        assert!(resource_suggestion_by_id(&conn, "s1", "semantic")
+            .unwrap()
+            .is_none());
+
+        let resource = resource_suggestion_by_id(&conn, "r1", "semantic")
+            .unwrap()
+            .unwrap();
+        assert_eq!(resource.title, "Stripe API docs");
+        assert_eq!(resource.match_kind, "semantic");
+    }
+
+    /// KNN returns its k nearest neighbours with no notion of relevance, so the
+    /// distance cut-off is the only thing preventing every query from suggesting
+    /// something unrelated.
+    #[test]
+    fn the_distance_cutoff_rejects_unrelated_vectors() {
+        let conn = crate::db::open_test_connection();
+        crate::db::init_schema(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO workspaces (id, name) VALUES ('w1', 'One');
+             INSERT INTO resources (id, workspace_id, type, title, target_path)
+                 VALUES ('near', 'w1', 'link', 'Near', 'https://a');
+             INSERT INTO resources (id, workspace_id, type, title, target_path)
+                 VALUES ('far', 'w1', 'link', 'Far', 'https://b');",
+        )
+        .unwrap();
+
+        let unit = |a: f32, b: f32| {
+            let mut v = vec![0f32; crate::ai::EMBEDDING_DIM];
+            v[0] = a;
+            v[1] = b;
+            crate::ai::embedding_to_blob(&v)
+        };
+        // 'near' is identical to the probe; 'far' is orthogonal, giving an L2
+        // distance of sqrt(2) which is above the cut-off.
+        conn.execute(
+            "INSERT INTO vec_items (item_id, item_type, embedding) VALUES ('near', 'link', ?1)",
+            params![unit(1.0, 0.0)],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO vec_items (item_id, item_type, embedding) VALUES ('far', 'link', ?1)",
+            params![unit(0.0, 1.0)],
+        )
+        .unwrap();
+
+        let hits = knn_search_scored(&conn, &unit(1.0, 0.0), 10).unwrap();
+        assert_eq!(hits.len(), 2, "both are returned before filtering");
+
+        let kept: Vec<&str> = hits
+            .iter()
+            .filter(|(_, _, d)| *d <= SEMANTIC_SUGGESTION_MAX_DISTANCE)
+            .map(|(id, _, _)| id.as_str())
+            .collect();
+        assert_eq!(kept, ["near"], "the orthogonal vector must be filtered out");
+    }
 
     // --- Manual ordering ------------------------------------------------------
 

@@ -171,6 +171,23 @@ pub struct NewTask {
     pub title: String,
 }
 
+/// An existing resource offered as a possible duplicate while adding a new one.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceSuggestion {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub resource_type: String,
+    pub title: String,
+    pub target_path: String,
+    /// Which workspace holds it — the useful part when the match is elsewhere.
+    pub workspace_id: String,
+    pub workspace_name: String,
+    /// How this was found: "exact", "keyword" or "semantic". The UI words an
+    /// exact duplicate differently from a resemblance.
+    pub match_kind: String,
+}
+
 /// State of the local semantic search feature, for the Settings panel.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -16,14 +16,17 @@ import {
   createResource,
   deleteResource,
   getResources,
+  findResourceByTarget,
   launchResource,
   reorderResources,
+  suggestResources,
 } from "../api/resources";
 import { getWorkspaceTime, resetWorkspaceTime } from "../api/timers";
 import { IDLE_TIMER } from "../types";
 import type {
   PreferredApp,
   Resource,
+  ResourceSuggestion,
   ResourceType,
   TimerController,
   Workspace,
@@ -33,6 +36,7 @@ import TasksSection from "./TasksSection";
 import TimerWidget from "./TimerWidget";
 import { useDragReorder } from "../utils/reorder";
 import { displayTarget } from "../utils/paths";
+import ResourceSuggestions from "./ResourceSuggestions";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Code, Terminal } from "lucide-react";
 
@@ -55,12 +59,15 @@ interface ResourcesPanelProps {
   workspace: Workspace;
   onError: (message: string | null) => void;
   timer: TimerController;
+  /** Selects another workspace, used when jumping to an existing match. */
+  onJumpToWorkspace: (id: string) => void;
 }
 
 export default function ResourcesPanel({
   workspace,
   onError,
   timer,
+  onJumpToWorkspace,
 }: ResourcesPanelProps) {
   const [resources, setResources] = useState<Resource[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,6 +83,8 @@ export default function ResourcesPanel({
   const [preferredApp, setPreferredApp] = useState<PreferredApp>("default");
   const [profileName, setProfileName] = useState("");
   const [saving, setSaving] = useState(false);
+  const [similar, setSimilar] = useState<ResourceSuggestion[]>([]);
+  const [duplicate, setDuplicate] = useState<ResourceSuggestion | null>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const targetRef = useRef<HTMLInputElement>(null);
 
@@ -113,6 +122,49 @@ export default function ResourcesPanel({
     if (composerOpen) titleRef.current?.focus();
   }, [composerOpen]);
 
+  // Debounced so a lookup runs once the typing pauses rather than per keystroke.
+  // Both effects clear their own results when the composer closes or the field
+  // empties, so a stale hint never outlives what produced it.
+  useEffect(() => {
+    if (!composerOpen || title.trim().length < 2) {
+      setSimilar([]);
+      return;
+    }
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      suggestResources(title)
+        .then((found) => {
+          if (!cancelled) setSimilar(found);
+        })
+        // A suggestion box is a convenience; a failure here must not interrupt
+        // the user mid-entry with an error banner.
+        .catch(() => {});
+    }, 220);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [composerOpen, title]);
+
+  useEffect(() => {
+    if (!composerOpen || !targetPath.trim()) {
+      setDuplicate(null);
+      return;
+    }
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      findResourceByTarget(type, targetPath)
+        .then((found) => {
+          if (!cancelled) setDuplicate(found);
+        })
+        .catch(() => {});
+    }, 220);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(handle);
+    };
+  }, [composerOpen, targetPath, type]);
+
   const {
     draggingId,
     overId,
@@ -144,6 +196,8 @@ export default function ResourcesPanel({
     setTargetPath("");
     setPreferredApp("default");
     setProfileName("");
+    setSimilar([]);
+    setDuplicate(null);
   }
 
   async function handleCreate() {
@@ -338,6 +392,18 @@ export default function ResourcesPanel({
                   “Copy as path” works as-is.
                 </p>
               )}
+
+              <ResourceSuggestions
+                duplicate={duplicate}
+                similar={similar}
+                onOpen={(suggestion) => {
+                  // Close the composer and jump to where the match already
+                  // lives, which is the whole point of surfacing it.
+                  setComposerOpen(false);
+                  resetComposer();
+                  onJumpToWorkspace(suggestion.workspaceId);
+                }}
+              />
 
               {type === "link" && (
                 <>
