@@ -66,13 +66,30 @@ pub fn is_model_downloaded(root: &Path) -> bool {
     })
 }
 
-/// Downloads any missing model file into the app data directory.
+/// Serialises downloads. Two concurrent callers would otherwise both find a
+/// file missing, both stream into the same `.part` path, and interleave their
+/// bytes into a file large enough to pass the size check but corrupt — or race
+/// on the rename and fail with a confusing "cannot find the file specified".
+/// Reachable in the app from a fast double-click on the Settings button.
+static DOWNLOAD_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+fn download_lock() -> &'static tokio::sync::Mutex<()> {
+    DOWNLOAD_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// Downloads any missing model file into the model cache directory.
 ///
-/// Safe to call repeatedly: files already present at a plausible size are
-/// skipped, so this is a no-op once the model is in place. Each file is
-/// written to a `.part` path and renamed only after a complete transfer, so an
-/// interrupted download can never be mistaken for a usable model.
+/// Safe to call repeatedly and concurrently: callers queue on
+/// [`DOWNLOAD_LOCK`], and whoever arrives second finds the files already
+/// present at a plausible size and returns without touching the network. Each
+/// file is written to a `.part` path and renamed only after a complete
+/// transfer, so an interrupted download can never be mistaken for a usable
+/// model.
 pub async fn ensure_model_downloaded(root: &Path) -> Result<(), String> {
+    // Held for the whole function: the check-then-download below is only sound
+    // if nothing else can download the same files in between.
+    let _serialised = download_lock().lock().await;
+
     let dir = model_dir(root);
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("failed to create model directory {}: {e}", dir.display()))?;
@@ -119,9 +136,16 @@ async fn download_to_file(url: &str, target: &Path, min_bytes: u64) -> Result<()
                         "model download was truncated ({total} bytes, expected at least {min_bytes})"
                     ));
                 }
-                tokio::fs::rename(&partial, target)
-                    .await
-                    .map_err(|e| format!("failed to finalise {}: {e}", target.display()))?;
+                if let Err(e) = tokio::fs::rename(&partial, target).await {
+                    // If the target is already there at a plausible size, some
+                    // other writer finalised it first and this is not a failure.
+                    if std::fs::metadata(target).is_ok_and(|m| m.is_file() && m.len() >= min_bytes)
+                    {
+                        log::info!("{} was already finalised elsewhere", target.display());
+                        return Ok(());
+                    }
+                    return Err(format!("failed to finalise {}: {e}", target.display()));
+                }
                 return Ok(());
             }
             Err(e) => {
