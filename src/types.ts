@@ -112,6 +112,18 @@ export interface SearchResult {
   action: SearchResultAction;
 }
 
+/** Contents of the always-on-top timer alert window. Mirrors `alert::AlertPayload`. */
+export interface AlertPayload {
+  title: string;
+  body: string;
+  /**
+   * Distinguishes consecutive alerts with identical text so the window can
+   * restart its auto-dismiss countdown instead of treating the second as a
+   * repeat render of the first.
+   */
+  nonce: number;
+}
+
 /** State of the local semantic search feature, shown in Settings. */
 export interface AiStatus {
   /** Whether the embedding model is present on disk and ready to use. */

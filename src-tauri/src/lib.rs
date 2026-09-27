@@ -1,6 +1,7 @@
 // Public so `commands` and `db` can reach the embedding surface and the vector
 // width they build the index around.
 pub mod ai;
+mod alert;
 mod commands;
 mod db;
 mod models;
@@ -17,6 +18,7 @@ use commands::{
     set_env_var, toggle_autostart, update_resource, update_script, update_setting,
     update_task_status, update_workspace,
 };
+use alert::{get_pending_alert, hide_timer_alert, show_timer_alert, PendingAlert};
 use db::Db;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_autostart::MacosLauncher;
@@ -182,6 +184,7 @@ pub fn run() {
             migrate_legacy_database(app.handle());
             let database = Db::initialize(app.handle())?;
             app.manage(database);
+            app.manage(PendingAlert::default());
             tray::setup_tray(app.handle())?;
             // After the window-state plugin has restored last run's geometry,
             // so a saved size that no longer fits gets corrected.
@@ -235,7 +238,10 @@ pub fn run() {
             toggle_autostart,
             open_log_folder,
             get_ai_status,
-            reindex_all
+            reindex_all,
+            show_timer_alert,
+            hide_timer_alert,
+            get_pending_alert
         ])
         .run(tauri::generate_context!())
         .expect("error while running orion");

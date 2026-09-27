@@ -6,6 +6,7 @@ import Sidebar from "./components/Sidebar";
 import ResourcesPanel from "./components/ResourcesPanel";
 import SettingsView from "./components/SettingsView";
 import Spotlight from "./components/Spotlight";
+import TimerAlert from "./components/TimerAlert";
 import { notifyPomodoroComplete } from "./utils/notify";
 import { useAppVersion } from "./utils/version";
 import { logTimerSession } from "./api/timers";
@@ -20,7 +21,9 @@ import type {
 
 export default function App() {
   const [label] = useState(() => getCurrentWebviewWindow().label);
-  return label === "spotlight" ? <Spotlight /> : <MainShell />;
+  if (label === "spotlight") return <Spotlight />;
+  if (label === "alert") return <TimerAlert />;
+  return <MainShell />;
 }
 
 function MainShell() {
@@ -103,8 +106,12 @@ function MainShell() {
         .then(() => setLogVersion((v) => v + 1))
         .catch((e) => setError(String(e)));
 
-      // Native toast attempt + beep fallback + in-app banner.
-      void notifyPomodoroComplete();
+      // Beep, Orion's own always-on-top alert window, and a native toast
+      // alongside it. Only a failure of the alert window is worth surfacing —
+      // it is the one the user is relying on to actually see.
+      void notifyPomodoroComplete().then((alertError) => {
+        if (alertError) setError(`Timer alert failed: ${alertError}`);
+      });
       showToast("Pomodoro Complete! Session logged. Time for a short break.");
     },
     [showToast]

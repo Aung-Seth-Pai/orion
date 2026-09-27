@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
+  BellRing,
   Check,
   Download,
   FolderOpen,
@@ -19,6 +20,7 @@ import {
   updateSetting,
 } from "../api/settings";
 import { getAiStatus, reindexAll } from "../api/ai";
+import { sendNativeToast, showTimerAlert } from "../utils/notify";
 import type { AiStatus } from "../types";
 
 const LAUNCH_ON_STARTUP_KEY = "launch_on_startup";
@@ -183,6 +185,13 @@ const TAB_LABELS: Record<(typeof TABS)[number], string> = {
 export default function SettingsView({ onError, onDataReplaced }: SettingsViewProps) {
   const [tab, setTab] = useState<(typeof TABS)[number]>("general");
 
+  const [testingNotification, setTestingNotification] = useState(false);
+  // null in a field means "that channel worked"; a string is its failure reason.
+  const [notifyReport, setNotifyReport] = useState<{
+    alert: string | null;
+    toast: string | null;
+  } | null>(null);
+
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
   const [buildingIndex, setBuildingIndex] = useState(false);
   const [aiMessage, setAiMessage] = useState<string | null>(null);
@@ -224,6 +233,24 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
       .finally(() => setSettingsLoaded(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /// Fires both notification channels and reports each independently, so a
+  /// silent timer can be attributed to the right one instead of guessed at.
+  const handleTestNotification = useCallback(async () => {
+    if (testingNotification) return;
+    onError(null);
+    setNotifyReport(null);
+    setTestingNotification(true);
+    try {
+      const [alert, toast] = await Promise.all([
+        showTimerAlert("Orion test", "If you can read this, timer alerts work."),
+        sendNativeToast("Orion test", "If you can read this, Windows notifications work."),
+      ]);
+      setNotifyReport({ alert, toast });
+    } finally {
+      setTestingNotification(false);
+    }
+  }, [testingNotification, onError]);
 
   const refreshAiStatus = useCallback(() => {
     getAiStatus()
@@ -493,6 +520,81 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                   disabled={!settingsLoaded}
                   className="w-24 rounded bg-zinc-800 px-2.5 py-1.5 text-center text-[13px] tabular-nums text-zinc-100 outline-none ring-1 ring-transparent focus:ring-indigo-500/50 disabled:opacity-40"
                 />
+              </div>
+
+              <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
+                <p className="text-[13px] font-medium text-zinc-200">
+                  Timer Notifications
+                </p>
+                <p className="mt-0.5 mb-2.5 text-xs leading-relaxed text-zinc-500">
+                  When a pomodoro finishes, Orion shows its own pop-up window so
+                  it cannot be hidden by Windows notification settings, and also
+                  sends a Windows notification so it lands in your notification
+                  centre. Send a test to check both.
+                </p>
+                <button
+                  onClick={() => void handleTestNotification()}
+                  disabled={testingNotification}
+                  className="flex items-center gap-1.5 rounded border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors enabled:hover:border-zinc-600 enabled:hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {testingNotification ? (
+                    <Loader2 size={13} className="animate-spin" />
+                  ) : (
+                    <BellRing size={13} />
+                  )}
+                  Send test notification
+                </button>
+
+                {notifyReport && (
+                  <div className="mt-2.5 space-y-1.5 text-xs leading-relaxed">
+                    <p
+                      className={
+                        notifyReport.alert === null
+                          ? "flex items-start gap-1.5 text-emerald-400"
+                          : "flex items-start gap-1.5 text-red-400"
+                      }
+                    >
+                      {notifyReport.alert === null ? (
+                        <Check size={13} className="mt-0.5 shrink-0" />
+                      ) : (
+                        <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                      )}
+                      <span>
+                        {notifyReport.alert === null
+                          ? "Orion pop-up shown."
+                          : `Orion pop-up failed: ${notifyReport.alert}`}
+                      </span>
+                    </p>
+                    <p
+                      className={
+                        notifyReport.toast === null
+                          ? "flex items-start gap-1.5 text-emerald-400"
+                          : "flex items-start gap-1.5 text-amber-300"
+                      }
+                    >
+                      {notifyReport.toast === null ? (
+                        <Check size={13} className="mt-0.5 shrink-0" />
+                      ) : (
+                        <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                      )}
+                      <span>
+                        {notifyReport.toast === null
+                          ? "Windows accepted the notification."
+                          : `Windows notification failed: ${notifyReport.toast}`}
+                      </span>
+                    </p>
+                    {notifyReport.toast === null && (
+                      <p className="text-zinc-500">
+                        If you heard a sound but saw no Windows banner, the
+                        notification was delivered and only the banner is
+                        suppressed. Check Windows Settings &rarr; System &rarr;
+                        Notifications &rarr; Orion, and press Win+N to see
+                        whether it is waiting in the notification centre. The
+                        Orion pop-up above is unaffected by those settings.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
