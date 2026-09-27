@@ -353,7 +353,11 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
       const text = await pendingFile.text();
       await importData(text);
       setPendingFile(null);
-      setStatusMessage("Backup imported successfully.");
+      // An import replaces the whole database, which clears the vector index
+      // with it. Say so here rather than letting /ai come back empty later.
+      setStatusMessage(
+        "Backup imported successfully. If you use semantic search, rebuild the index in the AI Search tab."
+      );
       onDataReplaced();
     } catch (e) {
       setPendingFile(null);

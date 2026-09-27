@@ -1,6 +1,6 @@
 [package]
 name = "orion"
-version = "0.1.0"
+version = "0.2.0"
 description = "Orion - Windows productivity cockpit"
 edition = "2021"
 
@@ -45,7 +45,11 @@ tokenizers = { version = "0.22", default-features = false, features = ["fancy-re
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 
 [profile.release]
-panic = "abort"
+# Deliberately NOT panic = "abort". candle panics on tensor shape mismatches,
+# and embedding now sits in the hot path behind every save and every /ai query.
+# Aborting would take the whole app down instead of surfacing the error the
+# embedding code already returns as an Err, and a release build cannot be
+# tested for this because the test harness always unwinds.
 codegen-units = 1
 lto = true
 opt-level = "s"

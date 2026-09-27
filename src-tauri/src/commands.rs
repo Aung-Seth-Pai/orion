@@ -79,10 +79,17 @@ fn lock_db(
 const INDEX_WORKSPACE: &str = "workspace";
 const INDEX_SCRIPT: &str = "script";
 
-fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+/// Where the embedding model is cached.
+///
+/// Deliberately the *local* data directory, not the roaming one that holds
+/// `data.db`. The weights are ~90 MB and fully regenerable by re-downloading,
+/// so they must not be pushed into a roaming profile that syncs between
+/// machines. `data.db` stays where it is — it is small and genuinely worth
+/// roaming.
+fn model_root_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
-        .app_data_dir()
-        .map_err(|e| format!("failed to resolve app data dir: {e}"))
+        .app_local_data_dir()
+        .map_err(|e| format!("failed to resolve local app data dir: {e}"))
 }
 
 /// Embeds `text` and upserts it into the vector index, off the caller's path.
@@ -95,7 +102,7 @@ fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// 2. Indexing is best-effort. A failure is logged and swallowed, never
 ///    surfaced, so a broken index cannot stop someone saving their work.
 fn spawn_index_item(db: &State<'_, Db>, app: &AppHandle, id: String, item_type: &str, text: String) {
-    let Ok(dir) = app_data_dir(app) else {
+    let Ok(dir) = model_root_dir(app) else {
         return;
     };
     let conn = db.0.clone();
@@ -221,7 +228,7 @@ fn collect_indexable(conn: &rusqlite::Connection) -> Result<Vec<IndexableItem>, 
 /// every item happened to be edited.
 #[tauri::command]
 pub async fn reindex_all(app: AppHandle, db: State<'_, Db>) -> Result<(), String> {
-    let dir = app_data_dir(&app)?;
+    let dir = model_root_dir(&app)?;
     crate::ai::ensure_model_downloaded(&dir).await?;
 
     let conn = db.0.clone();
@@ -278,7 +285,7 @@ pub async fn reindex_all(app: AppHandle, db: State<'_, Db>) -> Result<(), String
 /// Whether semantic search is usable, and how far the index has got.
 #[tauri::command]
 pub async fn get_ai_status(app: AppHandle, db: State<'_, Db>) -> Result<AiStatus, String> {
-    let downloaded = crate::ai::is_model_downloaded(&app_data_dir(&app)?);
+    let downloaded = crate::ai::is_model_downloaded(&model_root_dir(&app)?);
     let conn = db.0.clone();
 
     spawn_blocking(move || {
@@ -1919,6 +1926,22 @@ fn hydrate_semantic_hit(
     found.map_err(|e| format!("failed to load semantic result: {e}"))
 }
 
+/// Shown when the model is ready but nothing is indexed. This is reachable in
+/// normal use: `import_data` replaces the whole database and clears the vector
+/// table with it, so a user who imports a backup and then types `/ai` would
+/// otherwise get a blank list with no hint that a rebuild is all that is
+/// missing. Inert for the same reason as [`ai_not_ready_notice`].
+fn ai_index_empty_notice() -> SearchResult {
+    SearchResult {
+        item_type: "notice".to_string(),
+        id: "ai-index-empty".to_string(),
+        title: "Semantic index is empty. Rebuild it in Settings to search by meaning."
+            .to_string(),
+        subtitle: "Settings → AI Search → Rebuild Index".to_string(),
+        action: "none".to_string(),
+    }
+}
+
 /// Shown instead of results when someone tries `/ai` before enabling it. It is
 /// deliberately inert — searching must never start a 90 MB download behind the
 /// user's back, so the only way forward is the explicit button in Settings.
@@ -1946,6 +1969,12 @@ async fn semantic_search(
 
         let guard = lock_db(&conn)?;
         let hits = knn_search(&guard, &blob, SEMANTIC_LIMIT)?;
+
+        // No neighbours at all means the index is empty, not that the query
+        // matched nothing: KNN always returns the k closest vectors that exist.
+        if hits.is_empty() {
+            return Ok(vec![ai_index_empty_notice()]);
+        }
 
         let mut results = Vec::with_capacity(hits.len());
         for (id, item_type) in hits {
@@ -1979,7 +2008,7 @@ pub async fn search_all(
     }
 
     if scope == SearchScope::Semantic {
-        let dir = app_data_dir(&app)?;
+        let dir = model_root_dir(&app)?;
         if !crate::ai::is_model_downloaded(&dir) {
             return Ok(vec![ai_not_ready_notice()]);
         }
@@ -3312,6 +3341,37 @@ mod tests {
         assert_eq!(notice.action, "none", "it must not launch anything");
         assert_eq!(notice.item_type, "notice");
         assert!(notice.title.contains("Settings"));
+    }
+
+    #[test]
+    fn the_empty_index_notice_is_inert_and_distinct() {
+        let notice = ai_index_empty_notice();
+        assert_eq!(notice.action, "none", "it must not launch anything");
+        assert_eq!(notice.item_type, "notice");
+        assert!(notice.title.contains("Rebuild") || notice.title.contains("rebuild"));
+        // The two notices mean different things and must not be confusable:
+        // one says "download the model", the other "the model is fine, rebuild".
+        assert_ne!(notice.id, ai_not_ready_notice().id);
+    }
+
+    /// An empty index is the state `import_data` leaves behind, and it must
+    /// explain itself rather than look like "nothing matched your query".
+    #[test]
+    fn an_empty_index_yields_the_rebuild_notice() {
+        let conn = test_db_with_vectors();
+        conn.execute("DELETE FROM vec_items", []).unwrap();
+
+        let hits = knn_search(&conn, &probe(1.0, 0.0), SEMANTIC_LIMIT).unwrap();
+        assert!(hits.is_empty(), "the index must be empty for this to be the case");
+
+        // Mirrors the branch semantic_search takes on an empty hit list.
+        let shown = if hits.is_empty() {
+            vec![ai_index_empty_notice()]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(shown.len(), 1);
+        assert_eq!(shown[0].action, "none");
     }
 
     #[test]

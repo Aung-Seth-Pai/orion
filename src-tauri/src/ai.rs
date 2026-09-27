@@ -7,7 +7,7 @@
 //!
 //! The weights are the one piece we cannot ship inside the installer: the
 //! safetensors file is ~90 MB, so it is fetched once from Hugging Face into
-//! the app's data directory and reused offline forever after. Nothing is sent
+//! the app's local data directory and reused offline forever after. Nothing is sent
 //! to Hugging Face except the file requests themselves, and no text the user
 //! searches or stores ever leaves the machine.
 
@@ -50,16 +50,17 @@ struct Embedder {
     device: Device,
 }
 
-/// Where the weights live. Kept beside `data.db` so a user who wipes the app
-/// data directory reclaims the full footprint.
-pub fn model_dir(app_data_dir: &Path) -> PathBuf {
-    app_data_dir.join(MODEL_DIR)
+/// Where the weights live, under the caller-supplied root (the *local* app data
+/// directory — see `commands::model_root_dir`). Deleting that directory
+/// reclaims the full footprint.
+pub fn model_dir(root: &Path) -> PathBuf {
+    root.join(MODEL_DIR)
 }
 
 /// True when every model file is already on disk at a plausible size, meaning
 /// [`generate_embedding`] can run without touching the network.
-pub fn is_model_downloaded(app_data_dir: &Path) -> bool {
-    let dir = model_dir(app_data_dir);
+pub fn is_model_downloaded(root: &Path) -> bool {
+    let dir = model_dir(root);
     MODEL_FILES.iter().all(|(name, min_bytes)| {
         std::fs::metadata(dir.join(name)).is_ok_and(|m| m.is_file() && m.len() >= *min_bytes)
     })
@@ -71,8 +72,8 @@ pub fn is_model_downloaded(app_data_dir: &Path) -> bool {
 /// skipped, so this is a no-op once the model is in place. Each file is
 /// written to a `.part` path and renamed only after a complete transfer, so an
 /// interrupted download can never be mistaken for a usable model.
-pub async fn ensure_model_downloaded(app_data_dir: &Path) -> Result<(), String> {
-    let dir = model_dir(app_data_dir);
+pub async fn ensure_model_downloaded(root: &Path) -> Result<(), String> {
+    let dir = model_dir(root);
     std::fs::create_dir_all(&dir)
         .map_err(|e| format!("failed to create model directory {}: {e}", dir.display()))?;
 
@@ -212,9 +213,9 @@ async fn download_attempt(url: &str, partial: &Path) -> Result<u64, String> {
 
 /// Loads the weights and tokenizer from disk. Expensive — call through
 /// [`embedder`] so it happens at most once per process.
-fn load_embedder(app_data_dir: &Path) -> Result<Embedder, String> {
-    let dir = model_dir(app_data_dir);
-    if !is_model_downloaded(app_data_dir) {
+fn load_embedder(root: &Path) -> Result<Embedder, String> {
+    let dir = model_dir(root);
+    if !is_model_downloaded(root) {
         return Err(
             "The semantic search model has not been downloaded yet. Run the model setup first."
                 .to_string(),
@@ -257,13 +258,13 @@ fn load_embedder(app_data_dir: &Path) -> Result<Embedder, String> {
     })
 }
 
-fn embedder(app_data_dir: &Path) -> Result<&'static Embedder, String> {
+fn embedder(root: &Path) -> Result<&'static Embedder, String> {
     if let Some(loaded) = EMBEDDER.get() {
         return Ok(loaded);
     }
     // Two threads racing here both load; the loser's copy is dropped. Loading
     // is rare enough that serialising it is not worth a mutex.
-    let loaded = load_embedder(app_data_dir)?;
+    let loaded = load_embedder(root)?;
     Ok(EMBEDDER.get_or_init(|| loaded))
 }
 
@@ -276,13 +277,13 @@ fn embedder(app_data_dir: &Path) -> Result<&'static Embedder, String> {
 ///
 /// This is CPU-bound and blocking — call it from `spawn_blocking`, never
 /// directly on the async runtime.
-pub fn generate_embedding(app_data_dir: &Path, text: &str) -> Result<Vec<f32>, String> {
+pub fn generate_embedding(root: &Path, text: &str) -> Result<Vec<f32>, String> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return Err("Cannot embed empty text".into());
     }
 
-    let embedder = embedder(app_data_dir)?;
+    let embedder = embedder(root)?;
 
     let encoding = embedder
         .tokenizer

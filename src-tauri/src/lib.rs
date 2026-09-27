@@ -1,5 +1,5 @@
-// Public so the Phase 1 embedding surface is reachable from the crate root;
-// nothing calls it yet, that lands with the search wiring in Phase 2.
+// Public so `commands` and `db` can reach the embedding surface and the vector
+// width they build the index around.
 pub mod ai;
 mod commands;
 mod db;
