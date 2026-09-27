@@ -1,3 +1,6 @@
+// Public so the Phase 1 embedding surface is reachable from the crate root;
+// nothing calls it yet, that lands with the search wiring in Phase 2.
+pub mod ai;
 mod commands;
 mod db;
 mod models;
@@ -7,11 +10,12 @@ use std::path::PathBuf;
 
 use commands::{
     create_resource, create_script, create_task, create_workspace, delete_env_var, delete_resource,
-    delete_script, delete_task, delete_workspace, execute_script, export_all_data, get_env_vars,
-    get_resources, get_scripts, get_settings, get_tasks, get_workspace_time, get_workspaces,
-    import_data, launch_resource, log_timer_session, notify_timer_complete, open_log_folder,
-    reset_workspace_time, search_all, set_env_var, toggle_autostart, update_resource, update_script,
-    update_setting, update_task_status, update_workspace,
+    delete_script, delete_task, delete_workspace, execute_script, export_all_data, get_ai_status,
+    get_env_vars, get_resources, get_scripts, get_settings, get_tasks,
+    get_workspace_time, get_workspaces, import_data, launch_resource, log_timer_session,
+    notify_timer_complete, open_log_folder, reindex_all, reset_workspace_time, search_all,
+    set_env_var, toggle_autostart, update_resource, update_script, update_setting,
+    update_task_status, update_workspace,
 };
 use db::Db;
 use tauri::{AppHandle, Manager};
@@ -143,7 +147,9 @@ pub fn run() {
             set_env_var,
             delete_env_var,
             toggle_autostart,
-            open_log_folder
+            open_log_folder,
+            get_ai_status,
+            reindex_all
         ])
         .run(tauri::generate_context!())
         .expect("error while running orion");

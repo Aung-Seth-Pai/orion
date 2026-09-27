@@ -100,14 +100,26 @@ export interface NewTimerLogInput {
 export type SearchResultAction =
   | "open_workspace"
   | "launch_resource"
-  | "execute_script";
+  | "execute_script"
+  /** A non-actionable row, used by the "enable semantic search" notice. */
+  | "none";
 
 export interface SearchResult {
-  itemType: "workspace" | "link" | "folder" | "script";
+  itemType: "workspace" | "link" | "folder" | "script" | "notice";
   id: string;
   title: string;
   subtitle: string;
   action: SearchResultAction;
+}
+
+/** State of the local semantic search feature, shown in Settings. */
+export interface AiStatus {
+  /** Whether the embedding model is present on disk and ready to use. */
+  downloaded: boolean;
+  /** How many items currently have a vector. */
+  indexedCount: number;
+  /** How many items exist in total, so a stale index is visible as a mismatch. */
+  indexableCount: number;
 }
 
 export interface Task {

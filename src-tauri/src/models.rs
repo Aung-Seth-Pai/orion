@@ -171,6 +171,19 @@ pub struct NewTask {
     pub title: String,
 }
 
+/// State of the local semantic search feature, for the Settings panel.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiStatus {
+    /// Whether the embedding model is present on disk and ready to use.
+    pub downloaded: bool,
+    /// How many items currently have a vector in the index.
+    pub indexed_count: i64,
+    /// How many items exist that *could* be indexed, so the UI can tell a
+    /// finished backfill from a stale one.
+    pub indexable_count: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvVar {

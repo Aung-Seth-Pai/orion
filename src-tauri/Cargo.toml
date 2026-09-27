@@ -28,6 +28,21 @@ serde_json = "1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "process", "time", "io-util"] }
 uuid = { version = "1", features = ["v4"] }
+# --- Local semantic search (Phase 1) -----------------------------------------
+# sqlite-vec compiles into the binary and registers against rusqlite's own
+# bundled SQLite, so there is no loadable extension file to ship per platform.
+sqlite-vec = "0.1.9"
+# candle runs the embedding model on the CPU in pure Rust — no ONNX Runtime
+# DLL to bundle and no Python. Default features are CPU-only.
+candle-core = "0.11"
+candle-nn = "0.11"
+candle-transformers = "0.11"
+# Pinned to the version candle-core already pulls so it is compiled once.
+# fancy-regex keeps the regex engine pure Rust instead of building Oniguruma.
+tokenizers = { version = "0.22", default-features = false, features = ["fancy-regex"] }
+# Already in the tree via tauri-plugin-updater; declared here so the model
+# downloader can use it without adding a second HTTP/TLS stack.
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 
 [profile.release]
 panic = "abort"

@@ -6,6 +6,7 @@ import {
   FolderOpen,
   Loader2,
   RefreshCw,
+  Sparkles,
   Upload,
   X,
 } from "lucide-react";
@@ -17,6 +18,8 @@ import {
   importData,
   updateSetting,
 } from "../api/settings";
+import { getAiStatus, reindexAll } from "../api/ai";
+import type { AiStatus } from "../types";
 
 const LAUNCH_ON_STARTUP_KEY = "launch_on_startup";
 const DEFAULT_IDE_KEY = "default_ide";
@@ -170,8 +173,19 @@ function Toggle({
   );
 }
 
+const TABS = ["general", "ai", "data"] as const;
+const TAB_LABELS: Record<(typeof TABS)[number], string> = {
+  general: "General",
+  ai: "AI Search",
+  data: "Data",
+};
+
 export default function SettingsView({ onError, onDataReplaced }: SettingsViewProps) {
-  const [tab, setTab] = useState<"general" | "data">("general");
+  const [tab, setTab] = useState<(typeof TABS)[number]>("general");
+
+  const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
+  const [buildingIndex, setBuildingIndex] = useState(false);
+  const [aiMessage, setAiMessage] = useState<string | null>(null);
 
   const [startWithWindows, setStartWithWindows] = useState(false);
   const [ideCommand, setIdeCommand] = useState(DEFAULT_IDE_FALLBACK);
@@ -210,6 +224,35 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
       .finally(() => setSettingsLoaded(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const refreshAiStatus = useCallback(() => {
+    getAiStatus()
+      .then(setAiStatus)
+      .catch((e) => onError(String(e)));
+  }, [onError]);
+
+  useEffect(() => {
+    if (tab === "ai") refreshAiStatus();
+  }, [tab, refreshAiStatus]);
+
+  const handleBuildIndex = useCallback(async () => {
+    if (buildingIndex) return;
+    onError(null);
+    setAiMessage(null);
+    setBuildingIndex(true);
+    try {
+      await reindexAll();
+      setAiMessage("Semantic search is ready. Type /ai in the search bar to use it.");
+    } catch (e) {
+      // The download is the most likely failure, and it is resumable — say so
+      // rather than leaving the user guessing whether to start over.
+      setAiMessage(null);
+      onError(`${e}. You can safely press the button again to resume.`);
+    } finally {
+      setBuildingIndex(false);
+      refreshAiStatus();
+    }
+  }, [buildingIndex, onError, refreshAiStatus]);
 
   const persistIde = useCallback(
     (value: string) =>
@@ -334,7 +377,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
       <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-zinc-800/80 px-4">
         <h2 className="text-sm font-medium text-zinc-200">Settings</h2>
         <div className="ml-auto flex overflow-hidden rounded-md ring-1 ring-zinc-700">
-          {(["general", "data"] as const).map((t) => (
+          {TABS.map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -344,7 +387,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                   : "text-zinc-400 hover:text-zinc-200"
               }`}
             >
-              {t === "general" ? "General" : "Data"}
+              {TAB_LABELS[t]}
             </button>
           ))}
         </div>
@@ -500,6 +543,111 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                     {updateStatus}
                   </p>
                 )}
+              </div>
+            </div>
+          )}
+
+          {tab === "ai" && (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
+                <div className="mb-3 flex items-start gap-3">
+                  <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded bg-indigo-500/15 text-indigo-400">
+                    <Sparkles size={14} />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-medium text-zinc-200">
+                      Semantic Search
+                    </p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
+                      Find things by meaning instead of exact words — searching
+                      “deploy my app live” can surface a script called “Ship the
+                      release to production”. Type{" "}
+                      <span className="font-mono text-zinc-400">/ai</span> in the
+                      search bar once this is enabled.
+                    </p>
+                  </div>
+                </div>
+
+                <dl className="mb-3 grid grid-cols-2 gap-2 border-t border-zinc-800 pt-3 text-xs">
+                  <div>
+                    <dt className="text-zinc-500">Model</dt>
+                    <dd className="mt-0.5 font-medium">
+                      {aiStatus === null ? (
+                        <span className="text-zinc-600">Checking…</span>
+                      ) : aiStatus.downloaded ? (
+                        <span className="text-emerald-400">Ready</span>
+                      ) : (
+                        <span className="text-zinc-400">Not downloaded</span>
+                      )}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-zinc-500">Indexed items</dt>
+                    <dd className="mt-0.5 font-medium text-zinc-300">
+                      {aiStatus === null
+                        ? "—"
+                        : `${aiStatus.indexedCount} of ${aiStatus.indexableCount}`}
+                    </dd>
+                  </div>
+                </dl>
+
+                {/* Only flagged once the model is present: before that, the
+                    empty index is expected rather than out of date. */}
+                {aiStatus?.downloaded &&
+                  aiStatus.indexedCount < aiStatus.indexableCount && (
+                    <p className="mb-3 flex items-start gap-2 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-xs leading-relaxed text-amber-200/90">
+                      <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                      <span>
+                        {aiStatus.indexableCount - aiStatus.indexedCount} item(s)
+                        are not in the index yet and will not appear in{" "}
+                        <span className="font-mono">/ai</span> results. Rebuild
+                        to include them.
+                      </span>
+                    </p>
+                  )}
+
+                <button
+                  onClick={() => void handleBuildIndex()}
+                  disabled={buildingIndex || aiStatus === null}
+                  className="flex items-center gap-1.5 rounded bg-indigo-500/90 px-3 py-1.5 text-xs font-medium text-white transition-colors enabled:hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {buildingIndex ? (
+                    <Loader2 size={13} className="animate-spin" />
+                  ) : (
+                    <Download size={13} />
+                  )}
+                  {buildingIndex
+                    ? "Working…"
+                    : aiStatus?.downloaded
+                      ? "Rebuild Index"
+                      : "Download Model & Build Index (~90MB)"}
+                </button>
+
+                {buildingIndex && (
+                  <p className="mt-2.5 text-xs leading-relaxed text-zinc-400">
+                    Downloading the model on first run can take several minutes.
+                    It resumes automatically if the connection drops, and you can
+                    keep using Orion while it works.
+                  </p>
+                )}
+                {aiMessage && !buildingIndex && (
+                  <p className="mt-2.5 flex items-start gap-1.5 text-xs leading-relaxed text-emerald-400">
+                    <Check size={13} className="mt-0.5 shrink-0" />
+                    {aiMessage}
+                  </p>
+                )}
+              </div>
+
+              <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
+                <p className="text-[13px] font-medium text-zinc-200">
+                  What leaves your computer
+                </p>
+                <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
+                  Only the one-time model download itself. The model then runs
+                  locally on your CPU — your workspaces, links, scripts and
+                  search queries are never uploaded anywhere. Deleting Orion's
+                  app data directory removes the downloaded model along with it.
+                </p>
               </div>
             </div>
           )}

@@ -5,6 +5,7 @@ import {
   LayoutGrid,
   ScrollText,
   Search,
+  Sparkles,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { emitTo } from "@tauri-apps/api/event";
@@ -18,6 +19,7 @@ const TYPE_ICONS: Record<SearchResult["itemType"], typeof Globe> = {
   link: Globe,
   folder: Folder,
   script: ScrollText,
+  notice: Sparkles,
 };
 
 export default function Spotlight() {
@@ -81,6 +83,11 @@ export default function Spotlight() {
             await emitTo("main", "orion-select-workspace", item.id);
             await invoke("show_main");
             break;
+          case "none":
+            // The "enable semantic search" notice. It launches nothing, but
+            // surfacing the main window puts Settings one click away.
+            await invoke("show_main");
+            break;
         }
       } catch {
         // Errors are non-fatal here; the spotlight always hides.
@@ -126,7 +133,7 @@ export default function Spotlight() {
       </div>
 
       <div className="px-4 pt-1.5 text-[10px] text-zinc-600">
-        Tip: Filter results using /ws, /link, /folder, or /script
+        Tip: Filter results using /ws, /link, /folder, /script, or /ai
       </div>
 
       <ul ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-2 pt-1">

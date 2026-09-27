@@ -14,9 +14,9 @@ use tokio::task::spawn_blocking;
 
 use crate::db::Db;
 use crate::models::{
-    AutomationScript, BackupPayload, EnvVar, NewResource, NewScript, NewTask, NewTimerLog,
-    NewWorkspace, Resource, ResourcePatch, ScriptPatch, SearchResult, Task, TimerLog, Workspace,
-    WorkspacePatch,
+    AiStatus, AutomationScript, BackupPayload, EnvVar, NewResource, NewScript, NewTask,
+    NewTimerLog, NewWorkspace, Resource, ResourcePatch, ScriptPatch, SearchResult, Task, TimerLog,
+    Workspace, WorkspacePatch,
 };
 
 enum SqlValue {
@@ -71,6 +71,263 @@ fn lock_db(
     db.lock().map_err(|_| "database mutex poisoned".to_string())
 }
 
+// --- Semantic index maintenance ---------------------------------------------
+
+/// Item kinds stored in `vec_items`. They deliberately match the `item_type`
+/// values the search results already use, so a semantic hit maps onto the same
+/// frontend actions as a keyword hit.
+const INDEX_WORKSPACE: &str = "workspace";
+const INDEX_SCRIPT: &str = "script";
+
+fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data dir: {e}"))
+}
+
+/// Embeds `text` and upserts it into the vector index, off the caller's path.
+///
+/// Two rules make this safe to call from any CRUD command:
+///
+/// 1. If the model has not been downloaded the task exits immediately. Creating
+///    a folder must never kick off a 90 MB download — that only ever happens
+///    when the user explicitly asks for a semantic search.
+/// 2. Indexing is best-effort. A failure is logged and swallowed, never
+///    surfaced, so a broken index cannot stop someone saving their work.
+fn spawn_index_item(db: &State<'_, Db>, app: &AppHandle, id: String, item_type: &str, text: String) {
+    let Ok(dir) = app_data_dir(app) else {
+        return;
+    };
+    let conn = db.0.clone();
+    let item_type = item_type.to_string();
+
+    tokio::spawn(async move {
+        if !crate::ai::is_model_downloaded(&dir) {
+            return;
+        }
+
+        // Embedding is CPU-bound; keep it off the async runtime's threads.
+        let outcome = spawn_blocking(move || {
+            let embedding = crate::ai::generate_embedding(&dir, &text)?;
+            let blob = crate::ai::embedding_to_blob(&embedding);
+            let guard = lock_db(&conn)?;
+            guard
+                .execute(
+                    "INSERT OR REPLACE INTO vec_items (item_id, item_type, embedding)
+                     VALUES (?1, ?2, ?3)",
+                    params![id, item_type, blob],
+                )
+                .map_err(|e| format!("failed to write vector: {e}"))?;
+            Ok::<(), String>(())
+        })
+        .await;
+
+        match outcome {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => log::warn!("Semantic indexing skipped: {e}"),
+            Err(e) => log::warn!("Semantic indexing task failed: {e}"),
+        }
+    });
+}
+
+/// The text a resource is indexed by. Title and target are both searchable —
+/// "the repo I cloned into projects" should find a folder by its path as
+/// readily as by its name.
+fn resource_index_text(title: &str, target_path: &str) -> String {
+    format!("{title} {target_path}")
+}
+
+/// Removes vectors for ids that no longer exist. Virtual tables cannot carry a
+/// foreign key, so every delete path has to clean up after itself.
+fn delete_vectors(conn: &rusqlite::Connection, ids: &[String]) -> Result<(), String> {
+    for id in ids {
+        conn.execute("DELETE FROM vec_items WHERE item_id = ?1", params![id])
+            .map_err(|e| format!("failed to remove vector: {e}"))?;
+    }
+    Ok(())
+}
+
+/// One row queued for embedding during a backfill.
+struct IndexableItem {
+    id: String,
+    item_type: String,
+    text: String,
+}
+
+/// Everything in the database that belongs in the vector index, using the same
+/// text each CRUD hook would have embedded.
+fn collect_indexable(conn: &rusqlite::Connection) -> Result<Vec<IndexableItem>, String> {
+    let mut items = Vec::new();
+
+    let mut workspaces = conn
+        .prepare("SELECT id, name FROM workspaces")
+        .map_err(|e| format!("failed to prepare workspace scan: {e}"))?;
+    let rows = workspaces
+        .query_map([], |row| {
+            Ok(IndexableItem {
+                id: row.get(0)?,
+                item_type: INDEX_WORKSPACE.to_string(),
+                text: row.get(1)?,
+            })
+        })
+        .map_err(|e| format!("failed to scan workspaces: {e}"))?;
+    for row in rows {
+        items.push(row.map_err(|e| format!("failed to read workspace row: {e}"))?);
+    }
+
+    let mut resources = conn
+        .prepare("SELECT id, type, title, target_path FROM resources")
+        .map_err(|e| format!("failed to prepare resource scan: {e}"))?;
+    let rows = resources
+        .query_map([], |row| {
+            let title: String = row.get(2)?;
+            let target: String = row.get(3)?;
+            Ok(IndexableItem {
+                id: row.get(0)?,
+                item_type: row.get(1)?,
+                text: resource_index_text(&title, &target),
+            })
+        })
+        .map_err(|e| format!("failed to scan resources: {e}"))?;
+    for row in rows {
+        items.push(row.map_err(|e| format!("failed to read resource row: {e}"))?);
+    }
+
+    let mut scripts = conn
+        .prepare("SELECT id, title FROM automation_scripts")
+        .map_err(|e| format!("failed to prepare script scan: {e}"))?;
+    let rows = scripts
+        .query_map([], |row| {
+            Ok(IndexableItem {
+                id: row.get(0)?,
+                item_type: INDEX_SCRIPT.to_string(),
+                text: row.get(1)?,
+            })
+        })
+        .map_err(|e| format!("failed to scan scripts: {e}"))?;
+    for row in rows {
+        items.push(row.map_err(|e| format!("failed to read script row: {e}"))?);
+    }
+
+    Ok(items)
+}
+
+/// Downloads the model if needed, then rebuilds the whole vector index.
+///
+/// This is the only path that fetches the model, and it exists so the download
+/// is a deliberate choice made in Settings rather than a side effect of typing.
+/// Items created before the model arrived have no vector — the CRUD hooks only
+/// fire on write — so without this, semantic search would stay empty until
+/// every item happened to be edited.
+#[tauri::command]
+pub async fn reindex_all(app: AppHandle, db: State<'_, Db>) -> Result<(), String> {
+    let dir = app_data_dir(&app)?;
+    crate::ai::ensure_model_downloaded(&dir).await?;
+
+    let conn = db.0.clone();
+
+    spawn_blocking(move || {
+        // Read, embed, then write. The expensive middle step deliberately holds
+        // no lock, so the rest of the app keeps working during a long backfill.
+        let items = {
+            let guard = lock_db(&conn)?;
+            collect_indexable(&guard)?
+        };
+
+        let total = items.len();
+        let mut embedded = Vec::with_capacity(total);
+        for item in items {
+            match crate::ai::generate_embedding(&dir, &item.text) {
+                Ok(vector) => embedded.push((
+                    item.id,
+                    item.item_type,
+                    crate::ai::embedding_to_blob(&vector),
+                )),
+                // One unembeddable row must not abandon the whole backfill.
+                Err(e) => log::warn!("Skipping '{}' during re-index: {e}", item.id),
+            }
+        }
+
+        let mut guard = lock_db(&conn)?;
+        let tx = guard
+            .transaction()
+            .map_err(|e| format!("failed to begin re-index transaction: {e}"))?;
+
+        // Replacing wholesale also drops vectors for rows deleted while the
+        // model was absent, which no delete hook could have cleaned up.
+        tx.execute("DELETE FROM vec_items", [])
+            .map_err(|e| format!("failed to clear the index: {e}"))?;
+        for (id, item_type, blob) in &embedded {
+            tx.execute(
+                "INSERT OR REPLACE INTO vec_items (item_id, item_type, embedding)
+                 VALUES (?1, ?2, ?3)",
+                params![id, item_type, blob],
+            )
+            .map_err(|e| format!("failed to write vector for '{id}': {e}"))?;
+        }
+        tx.commit()
+            .map_err(|e| format!("failed to commit the re-index: {e}"))?;
+
+        log::info!("Re-indexed {} of {total} items", embedded.len());
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("background task failed: {e}"))?
+}
+
+/// Whether semantic search is usable, and how far the index has got.
+#[tauri::command]
+pub async fn get_ai_status(app: AppHandle, db: State<'_, Db>) -> Result<AiStatus, String> {
+    let downloaded = crate::ai::is_model_downloaded(&app_data_dir(&app)?);
+    let conn = db.0.clone();
+
+    spawn_blocking(move || {
+        let guard = lock_db(&conn)?;
+        let count = |sql: &str| -> Result<i64, String> {
+            guard
+                .query_row(sql, [], |row| row.get::<_, i64>(0))
+                .map_err(|e| format!("failed to count rows: {e}"))
+        };
+
+        Ok(AiStatus {
+            downloaded,
+            indexed_count: count("SELECT COUNT(*) FROM vec_items")?,
+            indexable_count: count(
+                "SELECT (SELECT COUNT(*) FROM workspaces)
+                      + (SELECT COUNT(*) FROM resources)
+                      + (SELECT COUNT(*) FROM automation_scripts)",
+            )?,
+        })
+    })
+    .await
+    .map_err(|e| format!("background task failed: {e}"))?
+}
+
+/// Every id a workspace deletion will remove: the workspace itself plus the
+/// resources and scripts SQLite cascades away with it.
+fn workspace_cascade_ids(
+    conn: &rusqlite::Connection,
+    workspace_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut ids = vec![workspace_id.to_string()];
+
+    for sql in [
+        "SELECT id FROM resources WHERE workspace_id = ?1",
+        "SELECT id FROM automation_scripts WHERE workspace_id = ?1",
+    ] {
+        let mut stmt = conn
+            .prepare(sql)
+            .map_err(|e| format!("failed to prepare cascade query: {e}"))?;
+        let rows = stmt
+            .query_map(params![workspace_id], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("failed to list cascaded rows: {e}"))?;
+        for row in rows {
+            ids.push(row.map_err(|e| format!("failed to read cascaded id: {e}"))?);
+        }
+    }
+    Ok(ids)
+}
+
 #[tauri::command]
 pub async fn get_workspaces(db: State<'_, Db>) -> Result<Vec<Workspace>, String> {
     let conn = db.0.clone();
@@ -98,7 +355,11 @@ pub async fn get_workspaces(db: State<'_, Db>) -> Result<Vec<Workspace>, String>
 }
 
 #[tauri::command]
-pub async fn create_workspace(db: State<'_, Db>, input: NewWorkspace) -> Result<Workspace, String> {
+pub async fn create_workspace(
+    app: AppHandle,
+    db: State<'_, Db>,
+    input: NewWorkspace,
+) -> Result<Workspace, String> {
     let name = input.name.trim().to_string();
     if name.is_empty() {
         return Err("Workspace name cannot be empty".into());
@@ -130,10 +391,20 @@ pub async fn create_workspace(db: State<'_, Db>, input: NewWorkspace) -> Result<
     })
     .await
     .map_err(|e| format!("background task failed: {e}"))?
+    .inspect(|workspace| {
+        spawn_index_item(
+            &db,
+            &app,
+            workspace.id.clone(),
+            INDEX_WORKSPACE,
+            workspace.name.clone(),
+        );
+    })
 }
 
 #[tauri::command]
 pub async fn update_workspace(
+    app: AppHandle,
     db: State<'_, Db>,
     id: String,
     patch: WorkspacePatch,
@@ -198,6 +469,15 @@ pub async fn update_workspace(
     })
     .await
     .map_err(|e| format!("background task failed: {e}"))?
+    .inspect(|workspace| {
+        spawn_index_item(
+            &db,
+            &app,
+            workspace.id.clone(),
+            INDEX_WORKSPACE,
+            workspace.name.clone(),
+        );
+    })
 }
 
 #[tauri::command]
@@ -206,9 +486,17 @@ pub async fn delete_workspace(db: State<'_, Db>, id: String) -> Result<bool, Str
 
     spawn_blocking(move || {
         let guard = lock_db(&conn)?;
+        // Gathered before the delete: once the workspace is gone the cascade
+        // has already taken its resources and scripts with it.
+        let orphaned = workspace_cascade_ids(&guard, &id)?;
+
         let rows = guard
             .execute("DELETE FROM workspaces WHERE id = ?1", params![id])
             .map_err(|e| format!("failed to delete workspace: {e}"))?;
+
+        if rows > 0 {
+            delete_vectors(&guard, &orphaned)?;
+        }
         Ok(rows > 0)
     })
     .await
@@ -302,7 +590,11 @@ pub async fn get_resources(
 }
 
 #[tauri::command]
-pub async fn create_resource(db: State<'_, Db>, input: NewResource) -> Result<Resource, String> {
+pub async fn create_resource(
+    app: AppHandle,
+    db: State<'_, Db>,
+    input: NewResource,
+) -> Result<Resource, String> {
     let resource_type = input.resource_type.trim().to_lowercase();
     let preferred_app = input.preferred_app.trim().to_lowercase();
 
@@ -368,10 +660,20 @@ pub async fn create_resource(db: State<'_, Db>, input: NewResource) -> Result<Re
     })
     .await
     .map_err(|e| format!("background task failed: {e}"))?
+    .inspect(|resource| {
+        spawn_index_item(
+            &db,
+            &app,
+            resource.id.clone(),
+            &resource.resource_type,
+            resource_index_text(&resource.title, &resource.target_path),
+        );
+    })
 }
 
 #[tauri::command]
 pub async fn update_resource(
+    app: AppHandle,
     db: State<'_, Db>,
     id: String,
     patch: ResourcePatch,
@@ -467,6 +769,15 @@ pub async fn update_resource(
     })
     .await
     .map_err(|e| format!("background task failed: {e}"))?
+    .inspect(|resource| {
+        spawn_index_item(
+            &db,
+            &app,
+            resource.id.clone(),
+            &resource.resource_type,
+            resource_index_text(&resource.title, &resource.target_path),
+        );
+    })
 }
 
 #[tauri::command]
@@ -478,6 +789,10 @@ pub async fn delete_resource(db: State<'_, Db>, id: String) -> Result<bool, Stri
         let rows = guard
             .execute("DELETE FROM resources WHERE id = ?1", params![id])
             .map_err(|e| format!("failed to delete resource: {e}"))?;
+
+        if rows > 0 {
+            delete_vectors(&guard, std::slice::from_ref(&id))?;
+        }
         Ok(rows > 0)
     })
     .await
@@ -799,6 +1114,7 @@ pub async fn get_scripts(
 
 #[tauri::command]
 pub async fn create_script(
+    app: AppHandle,
     db: State<'_, Db>,
     input: NewScript,
 ) -> Result<AutomationScript, String> {
@@ -855,10 +1171,20 @@ pub async fn create_script(
     })
     .await
     .map_err(|e| format!("background task failed: {e}"))?
+    .inspect(|script| {
+        spawn_index_item(
+            &db,
+            &app,
+            script.id.clone(),
+            INDEX_SCRIPT,
+            script.title.clone(),
+        );
+    })
 }
 
 #[tauri::command]
 pub async fn update_script(
+    app: AppHandle,
     db: State<'_, Db>,
     id: String,
     patch: ScriptPatch,
@@ -933,6 +1259,15 @@ pub async fn update_script(
     })
     .await
     .map_err(|e| format!("background task failed: {e}"))?
+    .inspect(|script| {
+        spawn_index_item(
+            &db,
+            &app,
+            script.id.clone(),
+            INDEX_SCRIPT,
+            script.title.clone(),
+        );
+    })
 }
 
 #[tauri::command]
@@ -944,6 +1279,10 @@ pub async fn delete_script(db: State<'_, Db>, id: String) -> Result<bool, String
         let rows = guard
             .execute("DELETE FROM automation_scripts WHERE id = ?1", params![id])
             .map_err(|e| format!("failed to delete script: {e}"))?;
+
+        if rows > 0 {
+            delete_vectors(&guard, std::slice::from_ref(&id))?;
+        }
         Ok(rows > 0)
     })
     .await
@@ -1437,21 +1776,25 @@ enum SearchScope {
     Links,
     Folders,
     Scripts,
+    /// Meaning-based search over the local vector index. This is the only scope
+    /// that can trigger the one-time model download.
+    Semantic,
 }
 
 /// Splits an optional leading scope prefix (`/ws`, `/link`, `/folder`,
-/// `/script`, case-insensitive) from the rest of the query. A space after
-/// the prefix is optional: "/ws project" and "/wsproject" both scope to
+/// `/script`, `/ai`, case-insensitive) from the rest of the query. A space
+/// after the prefix is optional: "/ws project" and "/wsproject" both scope to
 /// workspaces with the term "project".
 fn parse_search_scope(query: &str) -> (SearchScope, String) {
     let trimmed = query.trim();
     let lower = trimmed.to_lowercase();
 
-    const PREFIXES: [(&str, SearchScope); 4] = [
+    const PREFIXES: [(&str, SearchScope); 5] = [
         ("/ws", SearchScope::Workspaces),
         ("/link", SearchScope::Links),
         ("/folder", SearchScope::Folders),
         ("/script", SearchScope::Scripts),
+        ("/ai", SearchScope::Semantic),
     ];
 
     for (prefix, scope) in PREFIXES {
@@ -1464,16 +1807,183 @@ fn parse_search_scope(query: &str) -> (SearchScope, String) {
     (SearchScope::All, trimmed.to_string())
 }
 
+/// How many nearest neighbours a semantic search returns. Kept smaller than
+/// `SEARCH_LIMIT` because every KNN hit is a match by construction — there is
+/// no relevance cutoff, so a long tail is just noise.
+const SEMANTIC_LIMIT: i64 = 12;
+
+/// Nearest neighbours to `blob`, closest first, as `(item_id, item_type)`.
+fn knn_search(
+    conn: &rusqlite::Connection,
+    blob: &[u8],
+    limit: i64,
+) -> Result<Vec<(String, String)>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT item_id, item_type FROM vec_items
+             WHERE embedding MATCH ?1 AND k = ?2
+             ORDER BY distance",
+        )
+        .map_err(|e| format!("failed to prepare vector search: {e}"))?;
+
+    let rows = stmt
+        .query_map(params![blob, limit], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| format!("failed to execute vector search: {e}"))?;
+
+    let mut hits = Vec::new();
+    for row in rows {
+        hits.push(row.map_err(|e| format!("failed to read vector hit: {e}"))?);
+    }
+    Ok(hits)
+}
+
+/// Turns one vector hit back into a displayable result by reading the row it
+/// points at. Returns `None` when the row is gone — a vector can outlive its
+/// item if a delete path ever misses, and a stale hit should be skipped rather
+/// than shown or raised as an error.
+fn hydrate_semantic_hit(
+    conn: &rusqlite::Connection,
+    id: &str,
+    item_type: &str,
+) -> Result<Option<SearchResult>, String> {
+    use rusqlite::OptionalExtension;
+
+    let found = match item_type {
+        INDEX_WORKSPACE => conn
+            .query_row(
+                "SELECT name FROM workspaces WHERE id = ?1",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map(|row| {
+                row.map(|name| SearchResult {
+                    item_type: INDEX_WORKSPACE.to_string(),
+                    id: id.to_string(),
+                    title: name,
+                    subtitle: "Workspace".to_string(),
+                    action: "open_workspace".to_string(),
+                })
+            }),
+        "link" | "folder" => conn
+            .query_row(
+                "SELECT type, title, target_path FROM resources WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map(|row| {
+                row.map(|(kind, title, target)| SearchResult {
+                    // Read from the row, not the index: a resource retyped from
+                    // link to folder would otherwise keep its stale kind.
+                    item_type: kind,
+                    id: id.to_string(),
+                    title,
+                    subtitle: target,
+                    action: "launch_resource".to_string(),
+                })
+            }),
+        INDEX_SCRIPT => conn
+            .query_row(
+                "SELECT s.title, CASE WHEN w.name IS NULL THEN 'Global script' ELSE w.name END
+                 FROM automation_scripts s
+                 LEFT JOIN workspaces w ON w.id = s.workspace_id
+                 WHERE s.id = ?1",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map(|row| {
+                row.map(|(title, subtitle)| SearchResult {
+                    item_type: INDEX_SCRIPT.to_string(),
+                    id: id.to_string(),
+                    title,
+                    subtitle,
+                    action: "execute_script".to_string(),
+                })
+            }),
+        other => {
+            log::warn!("Ignoring vector hit with unknown item type '{other}'");
+            return Ok(None);
+        }
+    };
+
+    found.map_err(|e| format!("failed to load semantic result: {e}"))
+}
+
+/// Shown instead of results when someone tries `/ai` before enabling it. It is
+/// deliberately inert — searching must never start a 90 MB download behind the
+/// user's back, so the only way forward is the explicit button in Settings.
+fn ai_not_ready_notice() -> SearchResult {
+    SearchResult {
+        item_type: "notice".to_string(),
+        id: "ai-model-missing".to_string(),
+        title: "AI Model not downloaded. Please go to Settings to enable Semantic Search."
+            .to_string(),
+        subtitle: "Settings → AI Search".to_string(),
+        action: "none".to_string(),
+    }
+}
+
+/// Meaning-based search over the local index. Never downloads: callers check
+/// [`crate::ai::is_model_downloaded`] first and show the notice instead.
+async fn semantic_search(
+    dir: PathBuf,
+    conn: Arc<Mutex<rusqlite::Connection>>,
+    term: String,
+) -> Result<Vec<SearchResult>, String> {
+    spawn_blocking(move || {
+        let embedding = crate::ai::generate_embedding(&dir, &term)?;
+        let blob = crate::ai::embedding_to_blob(&embedding);
+
+        let guard = lock_db(&conn)?;
+        let hits = knn_search(&guard, &blob, SEMANTIC_LIMIT)?;
+
+        let mut results = Vec::with_capacity(hits.len());
+        for (id, item_type) in hits {
+            if let Some(result) = hydrate_semantic_hit(&guard, &id, &item_type)? {
+                results.push(result);
+            }
+        }
+        Ok(results)
+    })
+    .await
+    .map_err(|e| format!("background task failed: {e}"))?
+}
+
 #[tauri::command]
-pub async fn search_all(db: State<'_, Db>, query: String) -> Result<Vec<SearchResult>, String> {
+pub async fn search_all(
+    app: AppHandle,
+    db: State<'_, Db>,
+    query: String,
+) -> Result<Vec<SearchResult>, String> {
     let (scope, term) = parse_search_scope(&query);
     // A bare "/" prefix (e.g. typing exactly "/ws") lists that scope's items
     // up to the limit; only an unscoped empty query returns nothing.
-    if term.is_empty() && scope == SearchScope::All {
+    //
+    // `/ai` is the exception: a semantic search needs something to compare
+    // against, so a bare prefix returns nothing rather than an error.
+    if term.is_empty() && matches!(scope, SearchScope::All | SearchScope::Semantic) {
         return Ok(Vec::new());
     }
     if term.len() > MAX_QUERY_CHARS {
         return Err("Search query is too long".into());
+    }
+
+    if scope == SearchScope::Semantic {
+        let dir = app_data_dir(&app)?;
+        if !crate::ai::is_model_downloaded(&dir) {
+            return Ok(vec![ai_not_ready_notice()]);
+        }
+        return semantic_search(dir, db.0.clone(), term).await;
     }
 
     let pattern = build_like_pattern(&term);
@@ -1494,6 +2004,8 @@ pub async fn search_all(db: State<'_, Db>, query: String) -> Result<Vec<SearchRe
             SearchScope::Links => arms.push(SEARCH_ARM_LINKS),
             SearchScope::Folders => arms.push(SEARCH_ARM_FOLDERS),
             SearchScope::Scripts => arms.push(SEARCH_ARM_SCRIPTS),
+            // Handled above; it never reaches the keyword path.
+            SearchScope::Semantic => unreachable!("semantic scope returns earlier"),
         }
 
         let sql = format!(
@@ -1956,7 +2468,12 @@ pub async fn import_data(db: State<'_, Db>, json_payload: String) -> Result<(), 
             .map_err(|e| format!("failed to begin transaction: {e}"))?;
 
         // Full replacement. Explicit deletes cover rows the cascade cannot
-        // reach (global scripts have no parent workspace).
+        // reach (global scripts have no parent workspace, and the vector index
+        // is a virtual table so nothing cascades into it at all). Imported rows
+        // are left unindexed here; they pick up vectors as they are edited, or
+        // through a re-index pass.
+        tx.execute("DELETE FROM vec_items", [])
+            .map_err(|e| format!("failed to clear the semantic index: {e}"))?;
         tx.execute("DELETE FROM workspace_env_vars", [])
             .map_err(|e| format!("failed to clear variables: {e}"))?;
         tx.execute("DELETE FROM tasks", [])
@@ -2300,10 +2817,24 @@ mod tests {
             parse_search_scope("/script\tbackup"),
             (SearchScope::Scripts, "backup".to_string())
         );
+        assert_eq!(
+            parse_search_scope("/ai where did I put the deploy notes"),
+            (
+                SearchScope::Semantic,
+                "where did I put the deploy notes".to_string()
+            )
+        );
+        assert_eq!(
+            parse_search_scope("/AI Staging"),
+            (SearchScope::Semantic, "Staging".to_string())
+        );
+        // A bare prefix yields an empty term, which search_all turns into an
+        // empty result rather than a model download.
+        assert_eq!(parse_search_scope("/ai"), (SearchScope::Semantic, String::new()));
     }
 
     fn test_db_with_sessions() -> rusqlite::Connection {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let conn = crate::db::open_test_connection();
         crate::db::init_schema(&conn).unwrap();
         conn.execute("INSERT INTO workspaces (id, name) VALUES ('w1', 'Work')", [])
             .unwrap();
@@ -2452,8 +2983,7 @@ mod tests {
 
     #[test]
     fn filtered_backup_imports_without_violating_foreign_keys() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        let conn = crate::db::open_test_connection();
         crate::db::init_schema(&conn).unwrap();
 
         let mut payload: BackupPayload = serde_json::from_str(BACKUP_WITH_ORPHANS).unwrap();
@@ -2500,5 +3030,361 @@ mod tests {
             parse_search_scope("/linkfoo.com"),
             (SearchScope::Links, "foo.com".to_string())
         );
+        assert_eq!(
+            parse_search_scope("/aideploy"),
+            (SearchScope::Semantic, "deploy".to_string())
+        );
+    }
+
+    // --- Semantic index -----------------------------------------------------
+
+    /// A database with one item of each kind plus a matching vector, using
+    /// synthetic unit vectors so the search path can be exercised without
+    /// loading the real model.
+    fn test_db_with_vectors() -> rusqlite::Connection {
+        let conn = crate::db::open_test_connection();
+        crate::db::init_schema(&conn).unwrap();
+
+        conn.execute_batch(
+            "INSERT INTO workspaces (id, name) VALUES ('w1', 'Payments');
+             INSERT INTO resources (id, workspace_id, type, title, target_path)
+                 VALUES ('r1', 'w1', 'folder', 'Repo', 'C:\\src\\payments');
+             INSERT INTO automation_scripts (id, workspace_id, title, script_type, script_content)
+                 VALUES ('s1', 'w1', 'Deploy', 'cmd', 'echo deploy');
+             INSERT INTO automation_scripts (id, workspace_id, title, script_type, script_content)
+                 VALUES ('s2', NULL, 'Global cleanup', 'cmd', 'echo clean');",
+        )
+        .unwrap();
+
+        for (id, kind, a, b) in [
+            ("w1", "workspace", 1.0f32, 0.0f32),
+            ("r1", "folder", 0.95, 0.31),
+            ("s1", "script", 0.0, 1.0),
+            ("s2", "script", -1.0, 0.0),
+        ] {
+            let mut v = vec![0f32; crate::ai::EMBEDDING_DIM];
+            v[0] = a;
+            v[1] = b;
+            conn.execute(
+                "INSERT INTO vec_items (item_id, item_type, embedding) VALUES (?1, ?2, ?3)",
+                params![id, kind, crate::ai::embedding_to_blob(&v)],
+            )
+            .unwrap();
+        }
+        conn
+    }
+
+    fn probe(a: f32, b: f32) -> Vec<u8> {
+        let mut v = vec![0f32; crate::ai::EMBEDDING_DIM];
+        v[0] = a;
+        v[1] = b;
+        crate::ai::embedding_to_blob(&v)
+    }
+
+    #[test]
+    fn knn_returns_nearest_first_and_respects_the_limit() {
+        let conn = test_db_with_vectors();
+
+        let hits = knn_search(&conn, &probe(1.0, 0.0), 3).unwrap();
+        assert_eq!(hits.len(), 3, "k must cap the result count");
+        let ids: Vec<&str> = hits.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(ids[0], "w1", "the identical vector must rank first");
+        assert_eq!(ids[1], "r1", "the near vector must rank second");
+        // The opposite vector is furthest and must not beat the orthogonal one.
+        assert_eq!(ids[2], "s1");
+    }
+
+    #[test]
+    fn every_item_kind_hydrates_into_a_usable_result() {
+        let conn = test_db_with_vectors();
+
+        let workspace = hydrate_semantic_hit(&conn, "w1", "workspace")
+            .unwrap()
+            .unwrap();
+        assert_eq!(workspace.title, "Payments");
+        assert_eq!(workspace.subtitle, "Workspace");
+        assert_eq!(workspace.action, "open_workspace");
+
+        let folder = hydrate_semantic_hit(&conn, "r1", "folder").unwrap().unwrap();
+        assert_eq!(folder.item_type, "folder");
+        assert_eq!(folder.title, "Repo");
+        assert_eq!(folder.subtitle, "C:\\src\\payments");
+        assert_eq!(folder.action, "launch_resource");
+
+        let scoped = hydrate_semantic_hit(&conn, "s1", "script").unwrap().unwrap();
+        assert_eq!(scoped.subtitle, "Payments", "scripts show their workspace");
+        assert_eq!(scoped.action, "execute_script");
+
+        let global = hydrate_semantic_hit(&conn, "s2", "script").unwrap().unwrap();
+        assert_eq!(global.subtitle, "Global script");
+    }
+
+    #[test]
+    fn a_vector_pointing_at_a_deleted_row_is_skipped() {
+        let conn = test_db_with_vectors();
+        conn.execute("DELETE FROM resources WHERE id = 'r1'", [])
+            .unwrap();
+
+        // The stale vector is still there, but hydration drops it silently
+        // instead of erroring or surfacing a blank row.
+        assert!(hydrate_semantic_hit(&conn, "r1", "folder").unwrap().is_none());
+        assert!(hydrate_semantic_hit(&conn, "nope", "workspace")
+            .unwrap()
+            .is_none());
+        assert!(hydrate_semantic_hit(&conn, "w1", "unknown-kind")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn hydration_reads_the_kind_from_the_row_not_the_index() {
+        let conn = test_db_with_vectors();
+        // A resource retyped after it was indexed: the vector still says
+        // 'folder', but the result must describe what the row is now.
+        conn.execute(
+            "UPDATE resources SET type = 'link', target_path = 'https://example.com'
+             WHERE id = 'r1'",
+            [],
+        )
+        .unwrap();
+
+        let hit = hydrate_semantic_hit(&conn, "r1", "folder").unwrap().unwrap();
+        assert_eq!(hit.item_type, "link");
+    }
+
+    #[test]
+    fn deleting_a_workspace_collects_its_cascaded_ids() {
+        let conn = test_db_with_vectors();
+
+        let mut ids = workspace_cascade_ids(&conn, "w1").unwrap();
+        ids.sort();
+        // The workspace, its resource and its scoped script — but not the
+        // global script, which survives the cascade.
+        assert_eq!(ids, vec!["r1", "s1", "w1"]);
+    }
+
+    #[test]
+    fn deleting_vectors_leaves_unrelated_ones_alone() {
+        let conn = test_db_with_vectors();
+
+        let doomed = workspace_cascade_ids(&conn, "w1").unwrap();
+        delete_vectors(&conn, &doomed).unwrap();
+
+        let remaining = knn_search(&conn, &probe(1.0, 0.0), 10).unwrap();
+        let ids: Vec<&str> = remaining.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(ids, vec!["s2"], "only the global script's vector survives");
+
+        // Removing an id with no vector must not error.
+        delete_vectors(&conn, &["never-indexed".to_string()]).unwrap();
+    }
+
+    #[test]
+    fn importing_clears_the_whole_index() {
+        let conn = test_db_with_vectors();
+        conn.execute("DELETE FROM vec_items", []).unwrap();
+
+        assert!(knn_search(&conn, &probe(1.0, 0.0), 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn backfill_collects_every_item_with_the_right_kind_and_text() {
+        let conn = test_db_with_vectors();
+
+        let items = collect_indexable(&conn).unwrap();
+        assert_eq!(items.len(), 4, "one workspace, one resource, two scripts");
+
+        let by_id = |id: &str| items.iter().find(|i| i.id == id).unwrap();
+
+        assert_eq!(by_id("w1").item_type, "workspace");
+        assert_eq!(by_id("w1").text, "Payments");
+
+        // A resource is indexed under its own kind, not a generic one, so the
+        // hit maps onto the right icon and action.
+        assert_eq!(by_id("r1").item_type, "folder");
+        assert!(by_id("r1").text.contains("Repo"));
+        assert!(by_id("r1").text.contains("C:\\src\\payments"));
+
+        assert_eq!(by_id("s1").item_type, "script");
+        assert_eq!(by_id("s2").text, "Global cleanup");
+    }
+
+    #[test]
+    fn backfill_covers_items_that_predate_the_index() {
+        let conn = test_db_with_vectors();
+        // Wipe the index the way reindex_all does before rebuilding.
+        conn.execute("DELETE FROM vec_items", []).unwrap();
+        assert!(knn_search(&conn, &probe(1.0, 0.0), 10).unwrap().is_empty());
+
+        // Every pre-existing row is still discoverable for embedding.
+        let items = collect_indexable(&conn).unwrap();
+        assert_eq!(items.len(), 4);
+        assert!(items.iter().all(|i| !i.text.trim().is_empty()));
+    }
+
+    #[test]
+    fn status_counts_match_what_the_backfill_would_index() {
+        let conn = test_db_with_vectors();
+
+        let indexable: i64 = conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM workspaces)
+                      + (SELECT COUNT(*) FROM resources)
+                      + (SELECT COUNT(*) FROM automation_scripts)",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let indexed: i64 = conn
+            .query_row("SELECT COUNT(*) FROM vec_items", [], |row| row.get(0))
+            .unwrap();
+
+        // The number Settings reports has to be the number reindex_all embeds,
+        // otherwise a finished backfill would still look incomplete.
+        assert_eq!(indexable, collect_indexable(&conn).unwrap().len() as i64);
+        assert_eq!(indexed, indexable);
+
+        // A partial index shows up as a mismatch, which is what drives the
+        // "rebuild to include them" warning.
+        conn.execute("DELETE FROM vec_items WHERE item_id = 'w1'", [])
+            .unwrap();
+        let after: i64 = conn
+            .query_row("SELECT COUNT(*) FROM vec_items", [], |row| row.get(0))
+            .unwrap();
+        assert!(after < indexable);
+    }
+
+    /// The Phase 3 gap, end to end: items that existed before the model was
+    /// downloaded have no vectors, and must become searchable after a backfill.
+    #[test]
+    #[ignore = "requires the downloaded model"]
+    fn backfill_makes_pre_existing_items_searchable() {
+        let dir = std::env::temp_dir().join("orion-model-test");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(crate::ai::ensure_model_downloaded(&dir)).unwrap();
+
+        let conn = crate::db::open_test_connection();
+        crate::db::init_schema(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO workspaces (id, name) VALUES ('w1', 'Payments');
+             INSERT INTO resources (id, workspace_id, type, title, target_path)
+                 VALUES ('r1', 'w1', 'link', 'Team standup notes', 'https://example.com/notes');
+             INSERT INTO automation_scripts (id, workspace_id, title, script_type, script_content)
+                 VALUES ('s1', 'w1', 'Ship the release to production', 'cmd', 'echo go');",
+        )
+        .unwrap();
+
+        // Nothing was indexed on the way in — exactly the state a user who
+        // enables AI search after months of use would be in.
+        assert!(knn_search(&conn, &probe(1.0, 0.0), 10).unwrap().is_empty());
+
+        // The body of reindex_all: collect, embed, replace.
+        let items = collect_indexable(&conn).unwrap();
+        assert_eq!(items.len(), 3);
+        conn.execute("DELETE FROM vec_items", []).unwrap();
+        for item in items {
+            let vector = crate::ai::generate_embedding(&dir, &item.text).unwrap();
+            conn.execute(
+                "INSERT OR REPLACE INTO vec_items (item_id, item_type, embedding)
+                 VALUES (?1, ?2, ?3)",
+                params![
+                    item.id,
+                    item.item_type,
+                    crate::ai::embedding_to_blob(&vector)
+                ],
+            )
+            .unwrap();
+        }
+
+        let query = crate::ai::generate_embedding(&dir, "deploy my app live").unwrap();
+        let hits = knn_search(&conn, &crate::ai::embedding_to_blob(&query), SEMANTIC_LIMIT).unwrap();
+        let top = hydrate_semantic_hit(&conn, &hits[0].0, &hits[0].1)
+            .unwrap()
+            .unwrap();
+
+        println!("top hit after backfill: {}", top.title);
+        assert_eq!(top.title, "Ship the release to production");
+        assert_eq!(hits.len(), 3, "every pre-existing item got a vector");
+    }
+
+    #[test]
+    fn the_not_ready_notice_is_inert() {
+        let notice = ai_not_ready_notice();
+        assert_eq!(notice.action, "none", "it must not launch anything");
+        assert_eq!(notice.item_type, "notice");
+        assert!(notice.title.contains("Settings"));
+    }
+
+    #[test]
+    fn resource_index_text_covers_title_and_target() {
+        let text = resource_index_text("Repo", "C:\\src\\payments");
+        assert!(text.contains("Repo"));
+        assert!(text.contains("payments"));
+    }
+
+    /// The whole `/ai` path with real weights: index a few items the way the
+    /// CRUD hooks do, then ask a question that shares no keyword with the
+    /// answer. Ignored by default because it needs the downloaded model.
+    #[test]
+    #[ignore = "requires the downloaded model"]
+    fn semantic_search_finds_items_by_meaning() {
+        let dir = std::env::temp_dir().join("orion-model-test");
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(crate::ai::ensure_model_downloaded(&dir)).unwrap();
+
+        let conn = crate::db::open_test_connection();
+        crate::db::init_schema(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO workspaces (id, name) VALUES ('w1', 'Payments');
+             INSERT INTO resources (id, workspace_id, type, title, target_path)
+                 VALUES ('r1', 'w1', 'link', 'Team standup notes',
+                         'https://example.com/notes');
+             INSERT INTO automation_scripts (id, workspace_id, title, script_type, script_content)
+                 VALUES ('s1', 'w1', 'Ship the release to production', 'cmd', 'echo go');
+             INSERT INTO automation_scripts (id, workspace_id, title, script_type, script_content)
+                 VALUES ('s2', 'w1', 'Compress holiday photos', 'cmd', 'echo zip');",
+        )
+        .unwrap();
+
+        // Index exactly as spawn_index_item would.
+        for (id, kind, text) in [
+            ("w1", INDEX_WORKSPACE, "Payments".to_string()),
+            (
+                "r1",
+                "link",
+                resource_index_text("Team standup notes", "https://example.com/notes"),
+            ),
+            ("s1", INDEX_SCRIPT, "Ship the release to production".into()),
+            ("s2", INDEX_SCRIPT, "Compress holiday photos".into()),
+        ] {
+            let embedding = crate::ai::generate_embedding(&dir, &text).unwrap();
+            conn.execute(
+                "INSERT OR REPLACE INTO vec_items (item_id, item_type, embedding)
+                 VALUES (?1, ?2, ?3)",
+                params![id, kind, crate::ai::embedding_to_blob(&embedding)],
+            )
+            .unwrap();
+        }
+
+        // No word here appears in the script's title.
+        let query = crate::ai::generate_embedding(&dir, "deploy my app live").unwrap();
+        let hits = knn_search(&conn, &crate::ai::embedding_to_blob(&query), SEMANTIC_LIMIT).unwrap();
+
+        let mut results = Vec::new();
+        for (id, kind) in &hits {
+            if let Some(r) = hydrate_semantic_hit(&conn, id, kind).unwrap() {
+                results.push(r);
+            }
+        }
+
+        println!(
+            "ranking: {:?}",
+            results.iter().map(|r| &r.title).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            results[0].title, "Ship the release to production",
+            "a keyword search would have found nothing here"
+        );
+        assert_eq!(results[0].action, "execute_script");
+        assert_eq!(results.len(), 4, "every indexed item hydrates");
     }
 }
