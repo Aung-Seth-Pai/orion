@@ -1,0 +1,64 @@
+<!doctype html>
+<meta charset="utf-8" />
+<style>
+  html, body { margin: 0; background: #0A0C10; font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+  body { padding: 30px 34px; color: #E8E6E1; }
+  h2 { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: #6B7280; font-weight: 600; margin: 0 0 16px; }
+  .grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 20px 16px; margin-bottom: 34px; }
+  .cell { text-align: center; }
+  .big { width: 86px; height: 86px; margin: 0 auto; color: #E8E6E1; }
+  .big svg { width: 100%; height: 100%; display: block; }
+  .name { font-size: 10px; color: #7C8190; margin-top: 7px; }
+  .hrs { font-size: 9px; color: #4B5563; }
+
+  /* The size it is actually used at, which is the only size that matters. */
+  .real { display: flex; flex-direction: column; gap: 3px; width: 250px; }
+  .row { display: flex; align-items: center; gap: 11px; padding: 7px 10px; border-radius: 6px; }
+  .row.on { background: #161A23; }
+  .mk { width: 22px; height: 22px; flex: none; color: #E8E6E1; }
+  .mk svg { width: 100%; height: 100%; display: block; }
+  .lbl { font-size: 13px; color: #B8BCC4; flex: 1; }
+  .row.on .lbl { color: #F0EEE9; }
+  .t { font-size: 10px; color: #575E6B; font-variant-numeric: tabular-nums; }
+  .split { display: flex; gap: 60px; align-items: flex-start; }
+</style>
+<body>
+  <h2>Geometry — enlarged</h2>
+  <div class="grid" id="grid"></div>
+
+  <div class="split">
+    <div>
+      <h2>At size — 22px, as used</h2>
+      <div class="real" id="real"></div>
+    </div>
+    <div>
+      <h2>Same name, increasing hours</h2>
+      <div class="real" id="ramp"></div>
+    </div>
+  </div>
+
+  <script src="mark.js"></script>
+  <script>
+    const WS = [
+      ["SE learning", 41], ["Advanced Python", 2], ["DAE", 18],
+      ["Quick Launch Shortcuts", 0.3], ["AI/ML", 27], ["Data Science", 9],
+      ["Stats", 4], ["Maths", 12], ["MLOps, DevOps", 6],
+      ["Language", 1], ["Entertainment", 22], ["Reading", 0],
+    ];
+    // Compressed so the top end does not flatten everything below it,
+    // and floored so a new workspace still reads as intentional.
+    const depth = (h) => Math.max(0.16, Math.min(1, Math.log1p(h) / Math.log1p(45)));
+
+    grid.innerHTML = WS.map(([n, h]) =>
+      `<div class="cell"><div class="big">${constellation(n, depth(h), 86)}</div>
+       <div class="name">${n}</div><div class="hrs">${h}h</div></div>`).join("");
+
+    real.innerHTML = WS.slice(0, 7).map(([n, h], i) =>
+      `<div class="row ${i === 0 ? "on" : ""}"><div class="mk">${constellation(n, depth(h), 22)}</div>
+       <div class="lbl">${n}</div><div class="t">${h}h</div></div>`).join("");
+
+    ramp.innerHTML = [0, 1, 4, 12, 30, 80].map((h) =>
+      `<div class="row"><div class="mk">${constellation("SE learning", depth(h), 22)}</div>
+       <div class="lbl">SE learning</div><div class="t">${h}h</div></div>`).join("");
+  </script>
+</body>
