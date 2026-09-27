@@ -714,7 +714,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                 {buildingIndex && (
                   <p className="mt-2.5 text-xs leading-relaxed text-zinc-400">
                     {aiStatus?.downloaded
-                      ? "Re-embedding every item. Expect a few seconds per hundred; you can keep using Orion while it works."
+                      ? "Re-embedding every item. You can keep using Orion while it works."
                       : "The one-time ~90 MB download can take several minutes. It resumes automatically if the connection drops, and you can keep using Orion while it works."}
                   </p>
                 )}
