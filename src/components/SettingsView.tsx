@@ -17,10 +17,12 @@ import {
   exportBackupToFile,
   getSettings,
   importData,
+  setSpotlightShortcut,
   updateSetting,
 } from "../api/settings";
 import { getAiStatus, reindexAll } from "../api/ai";
 import { sendNativeToast, showTimerAlert } from "../utils/notify";
+import ShortcutInput from "./ShortcutInput";
 import type { AiStatus } from "../types";
 
 const LAUNCH_ON_STARTUP_KEY = "launch_on_startup";
@@ -28,6 +30,8 @@ const DEFAULT_IDE_KEY = "default_ide";
 const PYTHON_PATH_KEY = "python_path";
 const NODE_PATH_KEY = "node_path";
 const POMODORO_MINUTES_KEY = "pomodoro_minutes";
+const SPOTLIGHT_SHORTCUT_KEY = "spotlight_shortcut";
+const DEFAULT_SPOTLIGHT_SHORTCUT = "CmdOrCtrl+Shift+O";
 const DEFAULT_IDE_FALLBACK = "code";
 const DEFAULT_POMODORO_MINUTES = 25;
 
@@ -185,6 +189,9 @@ const TAB_LABELS: Record<(typeof TABS)[number], string> = {
 export default function SettingsView({ onError, onDataReplaced }: SettingsViewProps) {
   const [tab, setTab] = useState<(typeof TABS)[number]>("general");
 
+  const [spotlightShortcut, setSpotlightShortcutState] = useState(
+    DEFAULT_SPOTLIGHT_SHORTCUT
+  );
   const [testingNotification, setTestingNotification] = useState(false);
   // null in a field means "that channel worked"; a string is its failure reason.
   const [notifyReport, setNotifyReport] = useState<{
@@ -228,11 +235,27 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
             : DEFAULT_POMODORO_MINUTES;
         savedPomodoroRef.current = minutes;
         setPomodoroDraft(String(minutes));
+
+        setSpotlightShortcutState(
+          s[SPOTLIGHT_SHORTCUT_KEY]?.trim() || DEFAULT_SPOTLIGHT_SHORTCUT
+        );
       })
       .catch((e) => onError(String(e)))
       .finally(() => setSettingsLoaded(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const handleSaveShortcut = useCallback(
+    async (accelerator: string) => {
+      onError(null);
+      // Awaited and deliberately not caught: ShortcutInput surfaces the failure
+      // inline, and local state must only advance once the backend confirms the
+      // accelerator is actually registered.
+      await setSpotlightShortcut(accelerator);
+      setSpotlightShortcutState(accelerator);
+    },
+    [onError]
+  );
 
   /// Fires both notification channels and reports each independently, so a
   /// silent timer can be attributed to the right one instead of guessed at.
@@ -524,6 +547,22 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
 
               <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
                 <p className="text-[13px] font-medium text-zinc-200">
+                  Global Search Shortcut
+                </p>
+                <p className="mt-0.5 mb-2.5 text-xs leading-relaxed text-zinc-500">
+                  Summons the search window from anywhere in Windows. If another
+                  app already owns the combination, Orion keeps the previous one
+                  and tells you.
+                </p>
+                <ShortcutInput
+                  value={spotlightShortcut}
+                  onSave={handleSaveShortcut}
+                  disabled={!settingsLoaded}
+                />
+              </div>
+
+              <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
+                <p className="text-[13px] font-medium text-zinc-200">
                   Timer Notifications
                 </p>
                 <p className="mt-0.5 mb-2.5 text-xs leading-relaxed text-zinc-500">
@@ -597,19 +636,6 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                 )}
               </div>
 
-              <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
-                <div>
-                  <p className="text-[13px] font-medium text-zinc-200">
-                    Global search shortcut
-                  </p>
-                  <p className="mt-0.5 text-xs text-zinc-500">
-                    Opens the quick search overlay from anywhere.
-                  </p>
-                </div>
-                <kbd className="rounded bg-zinc-800 px-2 py-1 text-[11px] text-zinc-300">
-                  Ctrl+Shift+O
-                </kbd>
-              </div>
 
               <p className="px-1 pt-1 text-[10px] text-zinc-600">
                 Autostart is applied immediately via the Windows registry.

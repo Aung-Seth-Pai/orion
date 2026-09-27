@@ -15,7 +15,7 @@ use commands::{
     get_env_vars, get_resources, get_scripts, get_settings, get_tasks,
     get_workspace_time, get_workspaces, import_data, launch_resource, log_timer_session,
     notify_timer_complete, open_log_folder, reindex_all, reorder_resources, reorder_scripts,
-    reorder_workspaces, reset_workspace_time, search_all,
+    reorder_workspaces, reset_workspace_time, search_all, set_spotlight_shortcut,
     set_env_var, toggle_autostart, update_resource, update_script, update_setting,
     update_task_status, update_workspace,
 };
@@ -185,9 +185,32 @@ pub fn run() {
         .setup(|app| {
             migrate_legacy_database(app.handle());
             let database = Db::initialize(app.handle())?;
+            // Read before `manage` takes ownership: the shortcut has to be
+            // registered from the stored value rather than a compile-time
+            // constant, since Settings can change it.
+            let shortcut = {
+                let guard = database
+                    .0
+                    .lock()
+                    .map_err(|_| "database mutex poisoned".to_string())?;
+                commands::stored_spotlight_shortcut(&guard)
+            };
             app.manage(database);
             app.manage(PendingAlert::default());
             tray::setup_tray(app.handle())?;
+
+            // A stored accelerator can become unregistrable between runs if
+            // another application claims it, so fall back rather than start with
+            // no way to open Spotlight at all.
+            if let Err(e) = tray::apply_spotlight_shortcut(app.handle(), &shortcut) {
+                log::warn!("{e} — falling back to {}", tray::DEFAULT_SPOTLIGHT_SHORTCUT);
+                if let Err(fallback) = tray::apply_spotlight_shortcut(
+                    app.handle(),
+                    tray::DEFAULT_SPOTLIGHT_SHORTCUT,
+                ) {
+                    log::error!("No spotlight shortcut could be registered: {fallback}");
+                }
+            }
             // After the window-state plugin has restored last run's geometry,
             // so a saved size that no longer fits gets corrected.
             fit_main_window_to_screen(app.handle());
@@ -246,7 +269,8 @@ pub fn run() {
             get_pending_alert,
             reorder_workspaces,
             reorder_resources,
-            reorder_scripts
+            reorder_scripts,
+            set_spotlight_shortcut
         ])
         .run(tauri::generate_context!())
         .expect("error while running orion");

@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { emitTo } from "@tauri-apps/api/event";
+import { getSettings } from "../api/settings";
 import { searchAll } from "../api/search";
 import { executeScript } from "../api/scripts";
 import { launchResource } from "../api/resources";
@@ -22,8 +23,16 @@ const TYPE_ICONS: Record<SearchResult["itemType"], typeof Globe> = {
   notice: Sparkles,
 };
 
+const DEFAULT_SPOTLIGHT_SHORTCUT = "CmdOrCtrl+Shift+O";
+
+/** `CmdOrCtrl+Shift+O` -> `Ctrl+Shift+O` for display. */
+function prettifyShortcut(accelerator: string): string {
+  return accelerator.replace("CmdOrCtrl", "Ctrl");
+}
+
 export default function Spotlight() {
   const [query, setQuery] = useState("");
+  const [shortcut, setShortcut] = useState(DEFAULT_SPOTLIGHT_SHORTCUT);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [selected, setSelected] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -60,6 +69,20 @@ export default function Spotlight() {
       ?.querySelectorAll("li")
       [selected]?.scrollIntoView({ block: "nearest" });
   }, [selected]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSettings()
+      .then((s) => {
+        const stored = s["spotlight_shortcut"]?.trim();
+        if (!cancelled && stored) setShortcut(stored);
+      })
+      // A stale hint is cosmetic; the default is already shown.
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const hide = useCallback(() => {
     void invoke("hide_spotlight").catch(() => {});
@@ -184,7 +207,7 @@ export default function Spotlight() {
         <span>↑↓ navigate</span>
         <span>↵ open</span>
         <span>esc dismiss</span>
-        <span className="ml-auto">Ctrl+Shift+O</span>
+        <span className="ml-auto">{prettifyShortcut(shortcut)}</span>
       </div>
     </div>
   );

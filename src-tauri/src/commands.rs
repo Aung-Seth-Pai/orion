@@ -510,6 +510,81 @@ pub async fn delete_workspace(db: State<'_, Db>, id: String) -> Result<bool, Str
     .map_err(|e| format!("background task failed: {e}"))?
 }
 
+// --- Global shortcut -------------------------------------------------------
+
+/// The stored spotlight accelerator, or the default when nothing is stored.
+/// Used at startup and as the rollback target when a new one cannot be
+/// registered.
+pub(crate) fn stored_spotlight_shortcut(conn: &rusqlite::Connection) -> String {
+    use rusqlite::OptionalExtension;
+
+    conn.query_row(
+        "SELECT value FROM app_settings WHERE key = ?1",
+        params![crate::tray::SPOTLIGHT_SHORTCUT_KEY],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .ok()
+    .flatten()
+    .map(|v| v.trim().to_string())
+    .filter(|v| !v.is_empty())
+    .unwrap_or_else(|| crate::tray::DEFAULT_SPOTLIGHT_SHORTCUT.to_string())
+}
+
+/// Changes the shortcut that summons the Spotlight window.
+///
+/// Registration is attempted before anything is persisted, and the previous
+/// accelerator is put back if it fails — otherwise a combination already owned
+/// by another application would be saved and leave the user with no working
+/// shortcut, and no obvious way to discover why.
+#[tauri::command]
+pub async fn set_spotlight_shortcut(
+    app: AppHandle,
+    db: State<'_, Db>,
+    accelerator: String,
+) -> Result<(), String> {
+    let accelerator = accelerator.trim().to_string();
+    if accelerator.is_empty() {
+        return Err("Shortcut cannot be empty".into());
+    }
+    if accelerator.len() > 64 {
+        return Err("Shortcut is too long".into());
+    }
+
+    let conn = db.0.clone();
+    let previous = {
+        let read = conn.clone();
+        spawn_blocking(move || {
+            let guard = lock_db(&read)?;
+            Ok::<String, String>(stored_spotlight_shortcut(&guard))
+        })
+        .await
+        .map_err(|e| format!("background task failed: {e}"))??
+    };
+
+    if let Err(e) = crate::tray::apply_spotlight_shortcut(&app, &accelerator) {
+        // Put the working shortcut back so the app is not left with none.
+        if let Err(restore) = crate::tray::apply_spotlight_shortcut(&app, &previous) {
+            log::error!("Failed to restore the previous shortcut '{previous}': {restore}");
+        }
+        return Err(e);
+    }
+
+    spawn_blocking(move || {
+        let guard = lock_db(&conn)?;
+        guard
+            .execute(
+                "INSERT INTO app_settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![crate::tray::SPOTLIGHT_SHORTCUT_KEY, accelerator],
+            )
+            .map_err(|e| format!("failed to save the shortcut: {e}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("background task failed: {e}"))?
+}
+
 // --- Manual ordering -------------------------------------------------------
 
 /// Rewrites `sort_order` for one scope from a caller-supplied order.

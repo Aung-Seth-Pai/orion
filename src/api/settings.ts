@@ -35,3 +35,12 @@ export function importData(jsonPayload: string): Promise<void> {
   return invoke("import_data", { jsonPayload });
 }
 
+
+/**
+ * Changes the global Spotlight shortcut. Rejects when the accelerator cannot be
+ * registered — usually because another application already owns it — in which
+ * case the previous shortcut is left in place and still working.
+ */
+export function setSpotlightShortcut(accelerator: string): Promise<void> {
+  return invoke("set_spotlight_shortcut", { accelerator });
+}

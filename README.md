@@ -4,11 +4,11 @@
 
 Orion is a zero-friction, single-context workspace launcher that instantly loads your project’s essential resources, notes, and focus timer—eliminating tab clutter and keeping you locked into one task at a time.
 
-It lives in your system tray. Press `Ctrl + Shift + O`, type a project name, and you are in: the right folders, the right docs, the right scripts, and a running timer. Nothing else competing for your attention.
+It lives in your system tray. Press `Ctrl + Shift + O` (rebindable in Settings), type a project name, and you are in: the right folders, the right docs, the right scripts, and a running timer. Nothing else competing for your attention.
 
 ## ✨ Key Features
 
-* **Global Quick Search:** Press `Ctrl + Shift + O` from anywhere in Windows to search and launch instantly. Narrow the results with slash command scoping — `/ws` for workspaces, `/link` for links, `/folder` for folders, and `/script` for automation scripts.
+* **Global Quick Search:** Press `Ctrl + Shift + O` from anywhere in Windows — or rebind it to any combination you prefer — to search and launch instantly. Narrow the results with slash command scoping: `/ws` for workspaces, `/link` for links, `/folder` for folders, `/script` for automation scripts, and `/ai` to search by meaning rather than by exact words.
 * **Multi-Language Automation:** Write and execute PowerShell, CMD, Node.js, Python, and WSL Bash scripts directly from the UI, with per-workspace interpreter overrides.
 * **Focus Analytics:** Independent Pomodoro and stopwatch timers per workspace that keep running while you work elsewhere in the app, native OS notification banners on completion, and resettable **Total Time** tracking so you can measure a sprint without losing your history.
 * **Environment Variable Injection:** Store workspace-specific secrets (API keys, database URIs) that are injected into your scripts at runtime — including across the WSL boundary.

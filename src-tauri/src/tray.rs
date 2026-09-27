@@ -1,9 +1,14 @@
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
-use tauri_plugin_global_shortcut::ShortcutState;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-pub const SPOTLIGHT_SHORTCUT: &str = "CmdOrCtrl+Shift+O";
+/// Used until the user chooses otherwise, and the fallback if a stored
+/// accelerator turns out to be unregistrable at startup.
+pub const DEFAULT_SPOTLIGHT_SHORTCUT: &str = "CmdOrCtrl+Shift+O";
+
+/// `app_settings` key holding the user's chosen accelerator.
+pub const SPOTLIGHT_SHORTCUT_KEY: &str = "spotlight_shortcut";
 
 fn focus_main(app: &AppHandle) {
     if let Some(main) = app.get_webview_window("main") {
@@ -66,16 +71,45 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// The plugin is built with no shortcuts registered.
+///
+/// Registration happens at runtime in [`apply_spotlight_shortcut`] instead,
+/// because `with_shortcuts` is fixed at build time and the accelerator has to be
+/// changeable from Settings. The handler ignores which shortcut fired: only one
+/// is ever registered, so whatever comes through is the spotlight key.
 pub fn init_global_shortcut() -> tauri::plugin::TauriPlugin<tauri::Wry> {
     tauri_plugin_global_shortcut::Builder::new()
-        .with_shortcuts([SPOTLIGHT_SHORTCUT])
-        .expect("spotlight shortcut definition must be valid")
         .with_handler(|app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
                 toggle_spotlight(app);
             }
         })
         .build()
+}
+
+/// Makes `accelerator` the spotlight shortcut, replacing any current one.
+///
+/// Only ever one shortcut is registered, so clearing first is safe and avoids
+/// leaving the old key live if the user switches away from it. The accelerator
+/// is parsed before anything is unregistered, so a malformed string cannot leave
+/// the app with no shortcut at all.
+pub fn apply_spotlight_shortcut(app: &AppHandle, accelerator: &str) -> Result<(), String> {
+    use std::str::FromStr;
+    use tauri_plugin_global_shortcut::Shortcut;
+
+    let parsed = Shortcut::from_str(accelerator)
+        .map_err(|e| format!("'{accelerator}' is not a valid shortcut: {e}"))?;
+
+    let shortcuts = app.global_shortcut();
+    let _ = shortcuts.unregister_all();
+
+    shortcuts.register(parsed).map_err(|e| {
+        // Almost always means another application already owns the combination.
+        format!("Could not register '{accelerator}': {e}. Another app may already use it.")
+    })?;
+
+    log::info!("Spotlight shortcut registered as '{accelerator}'");
+    Ok(())
 }
 
 #[tauri::command]
