@@ -12,7 +12,13 @@ import {
   X,
 } from "lucide-react";
 import { confirm } from "@tauri-apps/plugin-dialog";
-import { createResource, deleteResource, getResources, launchResource } from "../api/resources";
+import {
+  createResource,
+  deleteResource,
+  getResources,
+  launchResource,
+  reorderResources,
+} from "../api/resources";
 import { getWorkspaceTime, resetWorkspaceTime } from "../api/timers";
 import { IDLE_TIMER } from "../types";
 import type {
@@ -25,6 +31,9 @@ import type {
 import ScriptsSection from "./ScriptsSection";
 import TasksSection from "./TasksSection";
 import TimerWidget from "./TimerWidget";
+import { useDragReorder } from "../utils/reorder";
+import { displayTarget } from "../utils/paths";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Code, Terminal } from "lucide-react";
 
 const BROWSER_LABELS: Record<PreferredApp, string> = {
@@ -56,6 +65,7 @@ export default function ResourcesPanel({
   const [resources, setResources] = useState<Resource[]>([]);
   const [loading, setLoading] = useState(true);
   const [launchingId, setLaunchingId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [totalSeconds, setTotalSeconds] = useState<number | null>(null);
   const [resettingTime, setResettingTime] = useState(false);
 
@@ -102,6 +112,12 @@ export default function ResourcesPanel({
   useEffect(() => {
     if (composerOpen) titleRef.current?.focus();
   }, [composerOpen]);
+
+  const {
+    draggingId,
+    overId,
+    itemProps: dragProps,
+  } = useDragReorder(resources, handleReorder);
 
   async function handleResetTime() {
     if (resettingTime) return;
@@ -168,6 +184,37 @@ export default function ResourcesPanel({
     } catch (e) {
       onError(String(e));
       setResources(snapshot);
+    }
+  }
+
+  function handleReorder(ordered: Resource[]) {
+    onError(null);
+    const snapshot = resources;
+    setResources(ordered);
+    reorderResources(
+      workspace.id,
+      ordered.map((r) => r.id)
+    ).catch((e) => {
+      onError(String(e));
+      setResources(snapshot);
+    });
+  }
+
+  /// Copies a resource's target. The displayed form is copied rather than the
+  /// stored one, so a local file yields the path the user typed instead of the
+  /// file:// URL it is stored as — the path is what pastes usefully into
+  /// Explorer, a terminal or a chat.
+  async function handleCopy(res: Resource) {
+    onError(null);
+    try {
+      await writeText(displayTarget(res.targetPath));
+      setCopiedId(res.id);
+      window.setTimeout(
+        () => setCopiedId((current) => (current === res.id ? null : current)),
+        1400
+      );
+    } catch (e) {
+      onError(`Could not copy to the clipboard: ${String(e)}`);
     }
   }
 
@@ -354,7 +401,14 @@ export default function ResourcesPanel({
             {resources.map((res) => (
               <li
                 key={res.id}
-                className="group relative flex flex-col rounded-lg border border-zinc-800 bg-zinc-900/70 transition-colors hover:border-zinc-700"
+                {...dragProps(res.id)}
+                className={`group relative flex flex-col rounded-lg border bg-zinc-900/70 transition-colors ${
+                  draggingId === res.id ? "opacity-40" : ""
+                } ${
+                  overId === res.id
+                    ? "border-indigo-500/70"
+                    : "border-zinc-800 hover:border-zinc-700"
+                }`}
               >
                 <span
                   role="button"
@@ -366,7 +420,13 @@ export default function ResourcesPanel({
                   <Trash2 size={13} />
                 </span>
 
-                <div className="flex min-w-0 items-start gap-2.5 p-3 pr-8">
+                {/* The card body copies; the launch buttons below are separate
+                    so a click never has to choose between the two. */}
+                <div
+                  onClick={() => void handleCopy(res)}
+                  title="Click to copy"
+                  className="flex min-w-0 cursor-default items-start gap-2.5 p-3 pr-8"
+                >
                   <span
                     className={`mt-0.5 flex size-7 shrink-0 items-center justify-center rounded ${
                       res.type === "link"
@@ -380,7 +440,13 @@ export default function ResourcesPanel({
                     <p className="truncate text-[13px] font-medium text-zinc-200">
                       {res.title}
                     </p>
-                    <p className="truncate text-[11px] text-zinc-500">{res.targetPath}</p>
+                    <p className="truncate text-[11px] text-zinc-500">
+                      {copiedId === res.id ? (
+                        <span className="text-emerald-400">Copied to clipboard</span>
+                      ) : (
+                        displayTarget(res.targetPath)
+                      )}
+                    </p>
                     {res.type === "link" && res.preferredApp !== "default" && (
                       <p className="mt-1 inline-block rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400">
                         {BROWSER_LABELS[res.preferredApp]}

@@ -11,7 +11,12 @@ import { notifyPomodoroComplete } from "./utils/notify";
 import { useAppVersion } from "./utils/version";
 import { logTimerSession } from "./api/timers";
 import { getSettings } from "./api/settings";
-import { createWorkspace, deleteWorkspace, getWorkspaces } from "./api/workspaces";
+import {
+  createWorkspace,
+  deleteWorkspace,
+  getWorkspaces,
+  reorderWorkspaces,
+} from "./api/workspaces";
 import type {
   SessionType,
   TimerController,
@@ -290,6 +295,21 @@ function MainShell() {
     [workspaces, activeId]
   );
 
+  const handleReorder = useCallback(
+    (ordered: Workspace[]) => {
+      setError(null);
+      const snapshot = workspaces;
+      // Applied immediately so the drag feels instant, rolled back if the
+      // backend rejects the order — the same shape as handleDelete.
+      setWorkspaces(ordered);
+      reorderWorkspaces(ordered.map((w) => w.id)).catch((e) => {
+        setError(String(e));
+        setWorkspaces(snapshot);
+      });
+    },
+    [workspaces]
+  );
+
   const handleSelect = useCallback((id: string) => {
     setActiveId(id);
     setSettingsOpen(false);
@@ -313,6 +333,7 @@ function MainShell() {
         onOpenSettings={() => setSettingsOpen((v) => !v)}
         onCreate={handleCreate}
         onDelete={handleDelete}
+        onReorder={handleReorder}
       />
 
       <main className="flex min-w-0 flex-1 flex-col">

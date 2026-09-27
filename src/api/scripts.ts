@@ -24,3 +24,14 @@ export function deleteScript(id: string): Promise<boolean> {
 export function executeScript(id: string): Promise<string> {
   return invoke("execute_script", { id });
 }
+
+/**
+ * Persists a drag-and-drop reorder. `workspaceId` is null for the global list,
+ * matching how getScripts scopes them.
+ */
+export function reorderScripts(
+  workspaceId: string | null,
+  ids: string[]
+): Promise<void> {
+  return invoke("reorder_scripts", { workspaceId, ids });
+}

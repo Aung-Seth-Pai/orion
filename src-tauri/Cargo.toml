@@ -44,6 +44,7 @@ tokenizers = { version = "0.22", default-features = false, features = ["fancy-re
 # downloader can use it without adding a second HTTP/TLS stack.
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 tauri-plugin-window-state = "2"
+tauri-plugin-clipboard-manager = "2"
 
 [profile.release]
 # Deliberately NOT panic = "abort". candle panics on tensor shape mismatches,

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2, Plus, Rocket, Settings as SettingsIcon, Trash2, X } from "lucide-react";
 import type { Workspace } from "../types";
 import { useAppVersion } from "../utils/version";
+import { useDragReorder } from "../utils/reorder";
 
 const PALETTE = [
   "#ef4444",
@@ -22,6 +23,7 @@ interface SidebarProps {
   onOpenSettings: () => void;
   onCreate: (name: string, color: string | null) => Promise<void>;
   onDelete: (id: string) => void;
+  onReorder: (ordered: Workspace[]) => void;
 }
 
 export default function Sidebar({
@@ -32,8 +34,10 @@ export default function Sidebar({
   onOpenSettings,
   onCreate,
   onDelete,
+  onReorder,
 }: SidebarProps) {
   const appVersion = useAppVersion();
+  const { draggingId, overId, itemProps } = useDragReorder(workspaces, onReorder);
   const [composerOpen, setComposerOpen] = useState(false);
   const [name, setName] = useState("");
   const [color, setColor] = useState<string>(PALETTE[5]);
@@ -94,9 +98,18 @@ export default function Sidebar({
           {workspaces.map((ws) => {
             const active = ws.id === activeId;
             return (
-              <li key={ws.id}>
+              <li
+                key={ws.id}
+                {...itemProps(ws.id)}
+                className={`rounded-md transition-opacity ${
+                  draggingId === ws.id ? "opacity-40" : ""
+                } ${
+                  overId === ws.id ? "ring-1 ring-indigo-500/60" : ""
+                }`}
+              >
                 <button
                   onClick={() => onSelect(ws.id)}
+                  title="Drag to reorder"
                   className={`group flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors duration-100 cursor-default ${
                     active
                       ? "bg-zinc-700/50 text-zinc-100"

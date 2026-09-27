@@ -14,7 +14,8 @@ use commands::{
     delete_script, delete_task, delete_workspace, execute_script, export_all_data, get_ai_status,
     get_env_vars, get_resources, get_scripts, get_settings, get_tasks,
     get_workspace_time, get_workspaces, import_data, launch_resource, log_timer_session,
-    notify_timer_complete, open_log_folder, reindex_all, reset_workspace_time, search_all,
+    notify_timer_complete, open_log_folder, reindex_all, reorder_resources, reorder_scripts,
+    reorder_workspaces, reset_workspace_time, search_all,
     set_env_var, toggle_autostart, update_resource, update_script, update_setting,
     update_task_status, update_workspace,
 };
@@ -161,6 +162,7 @@ pub fn run() {
                 ])
                 .build(),
         )
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
@@ -241,7 +243,10 @@ pub fn run() {
             reindex_all,
             show_timer_alert,
             hide_timer_alert,
-            get_pending_alert
+            get_pending_alert,
+            reorder_workspaces,
+            reorder_resources,
+            reorder_scripts
         ])
         .run(tauri::generate_context!())
         .expect("error while running orion");

@@ -16,3 +16,8 @@ export function updateWorkspace(id: string, patch: WorkspacePatch): Promise<Work
 export function deleteWorkspace(id: string): Promise<boolean> {
   return invoke("delete_workspace", { id });
 }
+
+/** Persists a drag-and-drop reorder. `ids` must be every workspace, in order. */
+export function reorderWorkspaces(ids: string[]): Promise<void> {
+  return invoke("reorder_workspaces", { ids });
+}

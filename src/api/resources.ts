@@ -20,3 +20,12 @@ export function deleteResource(id: string): Promise<boolean> {
 export function launchResource(id: string, actionOverride?: "ide" | "terminal"): Promise<string> {
   return invoke("launch_resource", { id, actionOverride: actionOverride ?? null });
 }
+
+/**
+ * Persists a drag-and-drop reorder. `ids` must be every resource in the
+ * workspace, in order — the backend refuses a partial list rather than leave
+ * the unlisted rows sharing sort_order values.
+ */
+export function reorderResources(workspaceId: string, ids: string[]): Promise<void> {
+  return invoke("reorder_resources", { workspaceId, ids });
+}

@@ -510,6 +510,148 @@ pub async fn delete_workspace(db: State<'_, Db>, id: String) -> Result<bool, Str
     .map_err(|e| format!("background task failed: {e}"))?
 }
 
+// --- Manual ordering -------------------------------------------------------
+
+/// Rewrites `sort_order` for one scope from a caller-supplied order.
+///
+/// `scope_sql` is a fixed predicate chosen by the caller, never user input —
+/// the table and WHERE clause are compile-time strings and only the ids and
+/// scope value are bound as parameters.
+///
+/// The supplied ids must be exactly the ids in that scope. A drag-and-drop UI
+/// reorders a list it has already loaded, so anything else means the two have
+/// diverged, and silently ordering a subset would leave the unlisted rows
+/// sharing sort_order values with the listed ones — a list that reshuffles on
+/// its own the next time it loads. Failing loudly lets the caller refetch.
+fn apply_manual_order(
+    conn: &mut rusqlite::Connection,
+    table: &'static str,
+    scope_sql: &'static str,
+    scope_value: Option<&str>,
+    ids: &[String],
+) -> Result<(), String> {
+    let mut unique = std::collections::HashSet::new();
+    for id in ids {
+        if !unique.insert(id.as_str()) {
+            return Err(format!("'{id}' appears more than once in the new order"));
+        }
+    }
+
+    let tx = conn
+        .transaction()
+        .map_err(|e| format!("failed to begin reorder: {e}"))?;
+
+    let existing: std::collections::HashSet<String> = {
+        let sql = format!("SELECT id FROM {table} WHERE {scope_sql}");
+        let mut stmt = tx
+            .prepare(&sql)
+            .map_err(|e| format!("failed to prepare scope query: {e}"))?;
+        // One param list rather than a match over two query_map calls: the
+        // closures would otherwise be distinct types and the arms incompatible.
+        let scope_params: Vec<String> = scope_value.map(str::to_string).into_iter().collect();
+        let rows = stmt
+            .query_map(params_from_iter(scope_params.iter()), |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|e| format!("failed to list the current order: {e}"))?;
+
+        let mut set = std::collections::HashSet::new();
+        for row in rows {
+            set.insert(row.map_err(|e| format!("failed to read id: {e}"))?);
+        }
+        set
+    };
+
+    if existing.len() != unique.len() || !existing.iter().all(|id| unique.contains(id.as_str())) {
+        return Err(format!(
+            "the new order does not match what is stored ({} given, {} stored) — reload and try again",
+            unique.len(),
+            existing.len()
+        ));
+    }
+
+    {
+        let sql = format!("UPDATE {table} SET sort_order = ?1 WHERE id = ?2");
+        let mut stmt = tx
+            .prepare(&sql)
+            .map_err(|e| format!("failed to prepare reorder: {e}"))?;
+        for (position, id) in ids.iter().enumerate() {
+            stmt.execute(params![position as i64, id])
+                .map_err(|e| format!("failed to reorder '{id}': {e}"))?;
+        }
+    }
+
+    tx.commit()
+        .map_err(|e| format!("failed to commit reorder: {e}"))?;
+    Ok(())
+}
+
+/// Persists a drag-and-drop reorder of the workspace sidebar.
+#[tauri::command]
+pub async fn reorder_workspaces(db: State<'_, Db>, ids: Vec<String>) -> Result<(), String> {
+    let conn = db.0.clone();
+    spawn_blocking(move || {
+        let mut guard = lock_db(&conn)?;
+        apply_manual_order(&mut guard, "workspaces", "1 = 1", None, &ids)
+    })
+    .await
+    .map_err(|e| format!("background task failed: {e}"))?
+}
+
+/// Persists a drag-and-drop reorder of one workspace's resources.
+#[tauri::command]
+pub async fn reorder_resources(
+    db: State<'_, Db>,
+    workspace_id: String,
+    ids: Vec<String>,
+) -> Result<(), String> {
+    let conn = db.0.clone();
+    spawn_blocking(move || {
+        let mut guard = lock_db(&conn)?;
+        apply_manual_order(
+            &mut guard,
+            "resources",
+            "workspace_id = ?1",
+            Some(&workspace_id),
+            &ids,
+        )
+    })
+    .await
+    .map_err(|e| format!("background task failed: {e}"))?
+}
+
+/// Persists a drag-and-drop reorder of a script list. `workspace_id` is None for
+/// the global list, matching the scoping get_scripts already uses.
+#[tauri::command]
+pub async fn reorder_scripts(
+    db: State<'_, Db>,
+    workspace_id: Option<String>,
+    ids: Vec<String>,
+) -> Result<(), String> {
+    let conn = db.0.clone();
+    spawn_blocking(move || {
+        let mut guard = lock_db(&conn)?;
+        match workspace_id.as_deref() {
+            Some(ws) => apply_manual_order(
+                &mut guard,
+                "automation_scripts",
+                "workspace_id = ?1",
+                Some(ws),
+                &ids,
+            ),
+            None => apply_manual_order(
+                &mut guard,
+                "automation_scripts",
+                "workspace_id IS NULL",
+                None,
+                &ids,
+            ),
+        }
+    })
+    .await
+    .map_err(|e| format!("background task failed: {e}"))?
+}
+
 fn row_to_resource(row: &rusqlite::Row) -> rusqlite::Result<Resource> {
     Ok(Resource {
         id: row.get(0)?,
@@ -2887,6 +3029,174 @@ mod tests {
         );
     }
 
+
+    // --- Manual ordering ------------------------------------------------------
+
+    fn order_of(conn: &rusqlite::Connection, table: &str, scope: &str) -> Vec<String> {
+        let sql =
+            format!("SELECT id FROM {table} WHERE {scope} ORDER BY sort_order ASC, rowid ASC");
+        let mut stmt = conn.prepare(&sql).unwrap();
+        stmt.query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<String>, _>>()
+            .unwrap()
+    }
+
+    fn db_with_three_workspaces() -> rusqlite::Connection {
+        let conn = crate::db::open_test_connection();
+        crate::db::init_schema(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO workspaces (id, name, sort_order) VALUES ('a', 'A', 0);
+             INSERT INTO workspaces (id, name, sort_order) VALUES ('b', 'B', 1);
+             INSERT INTO workspaces (id, name, sort_order) VALUES ('c', 'C', 2);",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn reordering_writes_the_requested_sequence() {
+        let mut conn = db_with_three_workspaces();
+        assert_eq!(order_of(&conn, "workspaces", "1 = 1"), ["a", "b", "c"]);
+
+        let moved = vec!["c".to_string(), "a".to_string(), "b".to_string()];
+        apply_manual_order(&mut conn, "workspaces", "1 = 1", None, &moved).unwrap();
+
+        assert_eq!(order_of(&conn, "workspaces", "1 = 1"), ["c", "a", "b"]);
+    }
+
+    #[test]
+    fn reordering_is_idempotent() {
+        let mut conn = db_with_three_workspaces();
+        let same = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        apply_manual_order(&mut conn, "workspaces", "1 = 1", None, &same).unwrap();
+        apply_manual_order(&mut conn, "workspaces", "1 = 1", None, &same).unwrap();
+        assert_eq!(order_of(&conn, "workspaces", "1 = 1"), ["a", "b", "c"]);
+    }
+
+    /// A partial list is the dangerous case: ordering only a subset would leave
+    /// the unlisted rows sharing sort_order values with the listed ones, giving
+    /// a list that reshuffles itself on the next load.
+    #[test]
+    fn a_partial_order_is_refused_and_changes_nothing() {
+        let mut conn = db_with_three_workspaces();
+        let partial = vec!["c".to_string(), "a".to_string()];
+
+        let err = apply_manual_order(&mut conn, "workspaces", "1 = 1", None, &partial).unwrap_err();
+        assert!(err.contains("does not match"), "unhelpful message: {err}");
+        assert_eq!(
+            order_of(&conn, "workspaces", "1 = 1"),
+            ["a", "b", "c"],
+            "a refused reorder must not have written anything"
+        );
+    }
+
+    #[test]
+    fn an_unknown_or_duplicated_id_is_refused() {
+        let mut conn = db_with_three_workspaces();
+
+        let unknown = vec!["a".to_string(), "b".to_string(), "ghost".to_string()];
+        assert!(apply_manual_order(&mut conn, "workspaces", "1 = 1", None, &unknown).is_err());
+
+        let duplicated = vec!["a".to_string(), "a".to_string(), "b".to_string()];
+        let err =
+            apply_manual_order(&mut conn, "workspaces", "1 = 1", None, &duplicated).unwrap_err();
+        assert!(err.contains("more than once"), "unhelpful message: {err}");
+
+        assert_eq!(order_of(&conn, "workspaces", "1 = 1"), ["a", "b", "c"]);
+    }
+
+    /// Reordering one workspace's resources must not touch another's, and the
+    /// scope check has to be evaluated per workspace rather than table-wide.
+    #[test]
+    fn reordering_is_confined_to_its_scope() {
+        let conn = crate::db::open_test_connection();
+        crate::db::init_schema(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO workspaces (id, name) VALUES ('w1', 'One');
+             INSERT INTO workspaces (id, name) VALUES ('w2', 'Two');
+             INSERT INTO resources (id, workspace_id, type, title, target_path, sort_order)
+                 VALUES ('r1', 'w1', 'folder', 'R1', 'C:/1', 0);
+             INSERT INTO resources (id, workspace_id, type, title, target_path, sort_order)
+                 VALUES ('r2', 'w1', 'folder', 'R2', 'C:/2', 1);
+             INSERT INTO resources (id, workspace_id, type, title, target_path, sort_order)
+                 VALUES ('s1', 'w2', 'folder', 'S1', 'C:/3', 0);
+             INSERT INTO resources (id, workspace_id, type, title, target_path, sort_order)
+                 VALUES ('s2', 'w2', 'folder', 'S2', 'C:/4', 1);",
+        )
+        .unwrap();
+        let mut conn = conn;
+
+        let flipped = vec!["r2".to_string(), "r1".to_string()];
+        apply_manual_order(
+            &mut conn,
+            "resources",
+            "workspace_id = ?1",
+            Some("w1"),
+            &flipped,
+        )
+        .unwrap();
+
+        assert_eq!(
+            order_of(&conn, "resources", "workspace_id = 'w1'"),
+            ["r2", "r1"]
+        );
+        assert_eq!(
+            order_of(&conn, "resources", "workspace_id = 'w2'"),
+            ["s1", "s2"],
+            "the other workspace must be untouched"
+        );
+
+        // And w1's list is not accepted as w2's, since those ids are out of scope.
+        assert!(apply_manual_order(
+            &mut conn,
+            "resources",
+            "workspace_id = ?1",
+            Some("w2"),
+            &flipped
+        )
+        .is_err());
+    }
+
+    /// Global scripts live under `workspace_id IS NULL`, a separate list from any
+    /// workspace's, and reordering one must not disturb the other.
+    #[test]
+    fn global_and_scoped_script_lists_order_independently() {
+        let conn = crate::db::open_test_connection();
+        crate::db::init_schema(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO workspaces (id, name) VALUES ('w1', 'One');
+             INSERT INTO automation_scripts (id, workspace_id, title, script_type, script_content, sort_order)
+                 VALUES ('g1', NULL, 'G1', 'cmd', 'echo 1', 0);
+             INSERT INTO automation_scripts (id, workspace_id, title, script_type, script_content, sort_order)
+                 VALUES ('g2', NULL, 'G2', 'cmd', 'echo 2', 1);
+             INSERT INTO automation_scripts (id, workspace_id, title, script_type, script_content, sort_order)
+                 VALUES ('w1a', 'w1', 'A', 'cmd', 'echo 3', 0);
+             INSERT INTO automation_scripts (id, workspace_id, title, script_type, script_content, sort_order)
+                 VALUES ('w1b', 'w1', 'B', 'cmd', 'echo 4', 1);",
+        )
+        .unwrap();
+        let mut conn = conn;
+
+        apply_manual_order(
+            &mut conn,
+            "automation_scripts",
+            "workspace_id IS NULL",
+            None,
+            &["g2".to_string(), "g1".to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            order_of(&conn, "automation_scripts", "workspace_id IS NULL"),
+            ["g2", "g1"]
+        );
+        assert_eq!(
+            order_of(&conn, "automation_scripts", "workspace_id = 'w1'"),
+            ["w1a", "w1b"],
+            "the workspace's own scripts must be untouched"
+        );
+    }
 
     // --- Local file links -----------------------------------------------------
 

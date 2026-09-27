@@ -14,10 +14,12 @@ import {
   deleteScript,
   executeScript,
   getScripts,
+  reorderScripts,
   updateScript,
 } from "../api/scripts";
 import type { AutomationScript, ScriptType, Workspace } from "../types";
 import EnvVarsModal from "./EnvVarsModal";
+import { useDragReorder } from "../utils/reorder";
 
 const TYPE_LABELS: Record<ScriptType, string> = {
   powershell: "PowerShell",
@@ -180,6 +182,39 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
     }
   }
 
+  // A workspace's scripts and the global ones render as one list but are two
+  // separately ordered scopes in the database, so a drag may not cross between
+  // them. Rejecting the pairing up front also suppresses the drop indicator.
+  const sameScope = (sourceId: string, targetId: string) => {
+    const source = scripts.find((s) => s.id === sourceId);
+    const target = scripts.find((s) => s.id === targetId);
+    return !!source && !!target && source.workspaceId === target.workspaceId;
+  };
+
+  function handleReorder(ordered: AutomationScript[], movedId: string) {
+    onError(null);
+    const moved = ordered.find((s) => s.id === movedId);
+    if (!moved) return;
+
+    const snapshot = scripts;
+    setScripts(ordered);
+    // Only the moved script's own scope is sent; the other list is untouched,
+    // and the backend would reject a mixed list anyway.
+    const scopeIds = ordered
+      .filter((s) => s.workspaceId === moved.workspaceId)
+      .map((s) => s.id);
+    reorderScripts(moved.workspaceId, scopeIds).catch((e) => {
+      onError(String(e));
+      setScripts(snapshot);
+    });
+  }
+
+  const {
+    draggingId,
+    overId,
+    itemProps: dragProps,
+  } = useDragReorder(scripts, handleReorder, sameScope);
+
   return (
     <section>
       {envVarsOpen && (
@@ -282,7 +317,14 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
             return (
               <li
                 key={script.id}
-                className="group relative rounded-lg border border-zinc-800 bg-zinc-900/70 transition-colors hover:border-zinc-700"
+                {...dragProps(script.id)}
+                className={`group relative rounded-lg border bg-zinc-900/70 transition-colors ${
+                  draggingId === script.id ? "opacity-40" : ""
+                } ${
+                  overId === script.id
+                    ? "border-indigo-500/70"
+                    : "border-zinc-800 hover:border-zinc-700"
+                }`}
               >
                 <div className="flex items-center gap-2 px-3 pt-2.5 pb-2">
                   <span
