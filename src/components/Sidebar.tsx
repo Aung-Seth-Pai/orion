@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, Plus, Rocket, Settings as SettingsIcon, Trash2, X } from "lucide-react";
 import type { Workspace } from "../types";
+import { useAppVersion } from "../utils/version";
 
 const PALETTE = [
   "#ef4444",
@@ -32,6 +33,7 @@ export default function Sidebar({
   onCreate,
   onDelete,
 }: SidebarProps) {
+  const appVersion = useAppVersion();
   const [composerOpen, setComposerOpen] = useState(false);
   const [name, setName] = useState("");
   const [color, setColor] = useState<string>(PALETTE[5]);
@@ -205,7 +207,9 @@ export default function Sidebar({
           >
             <SettingsIcon size={14} />
           </button>
-          <span className="pr-1 text-[10px] text-zinc-700">v0.1.0</span>
+          <span className="pr-1 text-[10px] text-zinc-700">
+            {appVersion ? `v${appVersion}` : ""}
+          </span>
         </div>
       </div>
     </aside>

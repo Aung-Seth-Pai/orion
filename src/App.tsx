@@ -7,6 +7,7 @@ import ResourcesPanel from "./components/ResourcesPanel";
 import SettingsView from "./components/SettingsView";
 import Spotlight from "./components/Spotlight";
 import { notifyPomodoroComplete } from "./utils/notify";
+import { useAppVersion } from "./utils/version";
 import { logTimerSession } from "./api/timers";
 import { getSettings } from "./api/settings";
 import { createWorkspace, deleteWorkspace, getWorkspaces } from "./api/workspaces";
@@ -23,6 +24,7 @@ export default function App() {
 }
 
 function MainShell() {
+  const appVersion = useAppVersion();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -339,7 +341,7 @@ function MainShell() {
         </div>
 
         <div className="flex h-7 items-center border-t border-zinc-800/80 px-3 text-[10px] text-zinc-600">
-          <span>Orion v0.1.0</span>
+          <span>{appVersion ? `Orion v${appVersion}` : "Orion"}</span>
           <span className="ml-auto">{workspaces.length} workspace(s)</span>
         </div>
       </main>

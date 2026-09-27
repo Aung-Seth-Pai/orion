@@ -524,6 +524,78 @@ fn row_to_resource(row: &rusqlite::Row) -> rusqlite::Result<Resource> {
     })
 }
 
+/// True for an absolute native path: a drive-letter path (`C:\...` or `C:/...`)
+/// or a UNC share (`\server\share`). Relative paths are deliberately excluded —
+/// they have no meaning without a working directory, and accepting them would
+/// turn a typo into a silently broken resource.
+fn is_absolute_local_path(target: &str) -> bool {
+    let bytes = target.as_bytes();
+    let drive_letter = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/');
+    let unc = target.starts_with(r"\\") || target.starts_with("//");
+    drive_letter || unc
+}
+
+/// Percent-encodes the characters that would otherwise change how a URL parses.
+///
+/// `/` and `:` are left alone because they are structural here (the separator
+/// and the drive colon). Everything outside the unreserved set is escaped,
+/// which covers the two that actually bite in practice: a space, and a `#` in a
+/// filename silently truncating the path into a fragment.
+fn percent_encode_path(path: &str) -> String {
+    const KEEP: &[u8] = b"-._~/:";
+    let mut out = String::with_capacity(path.len());
+    for byte in path.as_bytes() {
+        if byte.is_ascii_alphanumeric() || KEEP.contains(byte) {
+            out.push(*byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// Turns an absolute local path into the `file://` URL the launcher expects,
+/// leaving anything that is already a URL untouched.
+///
+/// This exists so a link can be given as `C:\Users\me\Downloads\cv.pdf` — the
+/// form Explorer's "Copy as path" produces — instead of demanding the user
+/// hand-write `file:///C:/Users/me/Downloads/cv.pdf`. Normalising on the way in
+/// rather than at launch time means the stored value is always a valid URL, so
+/// `launch_resource` and its scheme check are unchanged, and a local file is not
+/// a new resource *type* needing a CHECK-constraint migration.
+fn normalize_target_path(resource_type: &str, target: &str) -> Result<String, String> {
+    let trimmed = target.trim();
+
+    // Folders are stored and launched as native paths, not URLs.
+    if resource_type != "link" || !is_absolute_local_path(trimmed) {
+        return Ok(trimmed.to_string());
+    }
+
+    // A directory given as a Link would open a file:// listing in the browser
+    // rather than Explorer, which is never what was meant.
+    if std::path::Path::new(trimmed).is_dir() {
+        return Err(
+            "That path is a folder. Add it as a Folder resource instead of a Link.".to_string(),
+        );
+    }
+
+    // Backslashes are not legal in a URL path; the drive colon and the
+    // separators both survive percent_encode_path untouched.
+    let forward = trimmed.replace('\\', "/");
+    let encoded = percent_encode_path(&forward);
+
+    // A UNC path already starts with two slashes, giving file://<host>/<share>.
+    // A drive path needs the empty authority, giving file:///C:/...
+    if encoded.starts_with("//") {
+        Ok(format!("file:{encoded}"))
+    } else {
+        Ok(format!("file:///{encoded}"))
+    }
+}
+
 fn validate_resource_fields(
     resource_type: &str,
     title: &str,
@@ -562,7 +634,10 @@ fn validate_resource_fields(
             || target.starts_with("https://")
             || target.starts_with("file://"))
     {
-        return Err("Links must start with http://, https:// or file://".to_string());
+        return Err(
+            r"Links must be a http:// or https:// URL, or an absolute file path such as C:\Users\you\file.pdf"
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -604,13 +679,11 @@ pub async fn create_resource(
 ) -> Result<Resource, String> {
     let resource_type = input.resource_type.trim().to_lowercase();
     let preferred_app = input.preferred_app.trim().to_lowercase();
+    // Before validation, so a bare absolute path is already a file:// URL by
+    // the time the scheme check runs.
+    let target_path = normalize_target_path(&resource_type, &input.target_path)?;
 
-    validate_resource_fields(
-        &resource_type,
-        &input.title,
-        &input.target_path,
-        &preferred_app,
-    )?;
+    validate_resource_fields(&resource_type, &input.title, &target_path, &preferred_app)?;
 
     let id = uuid::Uuid::new_v4().to_string();
     let profile_name = input
@@ -641,7 +714,7 @@ pub async fn create_resource(
                     input.workspace_id,
                     resource_type,
                     input.title.trim(),
-                    input.target_path.trim(),
+                    target_path,
                     preferred_app,
                     profile_name,
                     input.workspace_id
@@ -724,7 +797,8 @@ pub async fn update_resource(
                 .map(str::to_lowercase)
                 .unwrap_or(current.preferred_app.clone());
 
-            validate_resource_fields(&merged_type, merged_title, merged_target, &merged_app)?;
+            let merged_target = normalize_target_path(&merged_type, merged_target)?;
+            validate_resource_fields(&merged_type, merged_title, &merged_target, &merged_app)?;
 
             let mut assignments: Vec<&str> = Vec::new();
             let mut values: Vec<SqlValue> = Vec::new();
@@ -733,9 +807,11 @@ pub async fn update_resource(
                 assignments.push("title = ?");
                 values.push(SqlValue::Text(title.trim().to_string()));
             }
-            if let Some(target) = &patch.target_path {
+            if patch.target_path.is_some() {
                 assignments.push("target_path = ?");
-                values.push(SqlValue::Text(target.trim().to_string()));
+                // The normalised value, not the raw patch: otherwise editing a
+                // resource would store the bare path the scheme check rejects.
+                values.push(SqlValue::Text(merged_target.clone()));
             }
             if let Some(t) = &patch.resource_type {
                 assignments.push("type = ?");
@@ -2809,6 +2885,88 @@ mod tests {
         assert!(
             validate_resource_fields("link", "Doc", "file:///C:/docs/spec.pdf", "edge").is_ok()
         );
+    }
+
+
+    // --- Local file links -----------------------------------------------------
+
+    #[test]
+    fn recognises_absolute_local_paths() {
+        assert!(is_absolute_local_path(r"C:\Users\me\cv.pdf"));
+        assert!(is_absolute_local_path("C:/Users/me/cv.pdf"));
+        assert!(is_absolute_local_path(r"\\server\share\doc.txt"));
+        // Relative paths have no meaning without a working directory.
+        assert!(!is_absolute_local_path(r"Downloads\cv.pdf"));
+        assert!(!is_absolute_local_path("cv.pdf"));
+        assert!(!is_absolute_local_path("https://example.com"));
+        assert!(!is_absolute_local_path("C:"));
+    }
+
+    #[test]
+    fn a_bare_windows_path_becomes_a_file_url() {
+        assert_eq!(
+            normalize_target_path("link", r"C:\Users\zepha\Downloads\Resume.pdf").unwrap(),
+            "file:///C:/Users/zepha/Downloads/Resume.pdf"
+        );
+        // Surrounding whitespace is a copy-paste artefact, not part of the path.
+        assert_eq!(
+            normalize_target_path("link", r"  C:\tmp\notes.txt  ").unwrap(),
+            "file:///C:/tmp/notes.txt"
+        );
+    }
+
+    #[test]
+    fn characters_that_would_break_the_url_are_encoded() {
+        // A space must not split the URL, and a '#' must not become a fragment
+        // that silently truncates the filename.
+        assert_eq!(
+            normalize_target_path("link", r"C:\My Docs\draft #2.pdf").unwrap(),
+            "file:///C:/My%20Docs/draft%20%232.pdf"
+        );
+    }
+
+    #[test]
+    fn unc_paths_keep_their_host() {
+        assert_eq!(
+            normalize_target_path("link", r"\\nas\share\spec.pdf").unwrap(),
+            "file://nas/share/spec.pdf"
+        );
+    }
+
+    #[test]
+    fn urls_and_folders_pass_through_untouched() {
+        assert_eq!(
+            normalize_target_path("link", "https://example.com/a.pdf").unwrap(),
+            "https://example.com/a.pdf"
+        );
+        assert_eq!(
+            normalize_target_path("link", "file:///C:/already/a/url.pdf").unwrap(),
+            "file:///C:/already/a/url.pdf"
+        );
+        // A folder resource keeps its native path — the launcher hands it to
+        // Explorer, not to a browser.
+        assert_eq!(
+            normalize_target_path("folder", r"C:\src\payments").unwrap(),
+            r"C:\src\payments"
+        );
+    }
+
+    #[test]
+    fn normalised_paths_survive_the_scheme_check() {
+        // The whole point: what the normaliser emits must satisfy the validator
+        // that previously rejected the user's bare path outright.
+        let normalised =
+            normalize_target_path("link", r"C:\Users\zepha\Downloads\Resume.pdf").unwrap();
+        assert!(validate_resource_fields("link", "Resume", &normalised, "chrome").is_ok());
+        // And a relative path still fails, rather than being silently accepted.
+        assert!(validate_resource_fields("link", "Doc", "cv.pdf", "default").is_err());
+    }
+
+    #[test]
+    fn a_directory_given_as_a_link_is_rejected_with_guidance() {
+        let dir = std::env::temp_dir();
+        let err = normalize_target_path("link", &dir.to_string_lossy()).unwrap_err();
+        assert!(err.contains("Folder resource"), "unhelpful message: {err}");
     }
 
     #[test]

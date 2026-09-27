@@ -43,6 +43,7 @@ tokenizers = { version = "0.22", default-features = false, features = ["fancy-re
 # Already in the tree via tauri-plugin-updater; declared here so the model
 # downloader can use it without adding a second HTTP/TLS stack.
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+tauri-plugin-window-state = "2"
 
 [profile.release]
 # Deliberately NOT panic = "abort". candle panics on tensor shape mismatches,

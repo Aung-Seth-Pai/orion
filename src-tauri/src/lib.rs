@@ -60,6 +60,80 @@ fn migrate_legacy_database(app: &AppHandle) {
     }
 }
 
+/// Shrinks the main window until it fits the monitor it is actually on.
+///
+/// The configured 1200x800 is a *logical* size, so on a scaled display it can
+/// exceed the usable screen: on a 1280x800-logical panel at 150% the work area
+/// is only 1280x752 logical, leaving the window 48px taller than the space it
+/// has and — because it is centred — clipped at both top and bottom.
+///
+/// Everything here is in physical pixels, which is what both `work_area` and
+/// `outer_size` report, so no scale-factor arithmetic is needed.
+///
+/// A window that already fits is left completely alone, position included.
+/// That matters now that `tauri-plugin-window-state` restores the size and
+/// position from last run: this must correct a saved geometry that no longer
+/// fits (a size saved on a large monitor, then opened on the laptop panel)
+/// without overriding one the user deliberately chose.
+fn fit_main_window_to_screen(app: &AppHandle) {
+    use tauri::PhysicalSize;
+
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+
+    // `current_monitor` is None when the window sits outside every monitor,
+    // which is exactly the stranded case worth rescuing — fall back to the
+    // primary screen and re-centre onto it.
+    let monitor = match window.current_monitor() {
+        Ok(Some(monitor)) => Some(monitor),
+        _ => window.primary_monitor().ok().flatten(),
+    };
+    let Some(monitor) = monitor else {
+        log::warn!("No monitor reported; leaving the window size alone");
+        return;
+    };
+
+    let work = monitor.work_area();
+    let Ok(current) = window.outer_size() else {
+        return;
+    };
+
+    if current.width <= work.size.width && current.height <= work.size.height {
+        return;
+    }
+
+    // A little breathing room so the window does not sit flush against the
+    // taskbar or screen edge when it has to be shrunk.
+    const FILL: f64 = 0.94;
+    let max_width = (f64::from(work.size.width) * FILL) as u32;
+    let max_height = (f64::from(work.size.height) * FILL) as u32;
+
+    let fitted = PhysicalSize::new(
+        current.width.min(max_width),
+        current.height.min(max_height),
+    );
+
+    log::info!(
+        "Main window {}x{} did not fit the {}x{} work area; resizing to {}x{}",
+        current.width,
+        current.height,
+        work.size.width,
+        work.size.height,
+        fitted.width,
+        fitted.height
+    );
+
+    if let Err(e) = window.set_size(fitted) {
+        log::warn!("Failed to resize the main window: {e}");
+        return;
+    }
+    // Only after a resize: a window that fitted keeps its remembered position.
+    if let Err(e) = window.center() {
+        log::warn!("Failed to centre the main window: {e}");
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         // MUST be the first registered plugin: a second launch is dropped
@@ -94,12 +168,24 @@ pub fn run() {
             None,
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Remembers the main window's size and position between runs.
+        // Spotlight is excluded deliberately: it is frameless, non-resizable
+        // and re-centres itself on every show, so saved geometry would only
+        // fight that.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_denylist(&["spotlight"])
+                .build(),
+        )
         .plugin(tray::init_global_shortcut())
         .setup(|app| {
             migrate_legacy_database(app.handle());
             let database = Db::initialize(app.handle())?;
             app.manage(database);
             tray::setup_tray(app.handle())?;
+            // After the window-state plugin has restored last run's geometry,
+            // so a saved size that no longer fits gets corrected.
+            fit_main_window_to_screen(app.handle());
             log::info!("Orion started (v{})", app.package_info().version);
             Ok(())
         })

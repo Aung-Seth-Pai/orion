@@ -279,13 +279,16 @@ export default function ResourcesPanel({
                 onKeyDown={onKeyDown}
                 maxLength={2048}
                 placeholder={
-                  type === "link" ? "https://example.com" : "C:\\Users\\…\\Projects"
+                  type === "link"
+                    ? "https://example.com  or  C:\\Users\\…\\file.pdf"
+                    : "C:\\Users\\…\\Projects"
                 }
                 className="col-span-2 w-full rounded bg-zinc-800 px-2.5 py-1.5 text-[13px] text-zinc-100 placeholder-zinc-500 outline-none ring-1 ring-transparent focus:ring-indigo-500/50"
               />
               {type === "link" && (
                 <p className="col-span-2 -mt-1 text-[10px] text-zinc-600">
-                  Must start with http://, https://, or file://
+                  A web URL, or an absolute path to a local file — Explorer's
+                  “Copy as path” works as-is.
                 </p>
               )}
 
