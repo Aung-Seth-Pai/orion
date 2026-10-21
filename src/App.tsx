@@ -380,7 +380,12 @@ function MainShell() {
       : null;
 
   return (
-    <div className="flex h-full">
+    // relative so the pomodoro bar can span the whole window edge rather than
+    // starting after the sidebar, which both reads better and is the point --
+    // time passing belongs to the session, not to one panel of it.
+    <div className="relative flex h-full">
+      <PomodoroHairline fraction={pomodoroFraction} />
+
       <Sidebar
         workspaces={workspaces}
         workspaceTimes={workspaceTimes}
@@ -393,8 +398,7 @@ function MainShell() {
         onReorder={handleReorder}
       />
 
-      <main className="relative flex min-w-0 flex-1 flex-col">
-        <PomodoroHairline fraction={pomodoroFraction} />
+      <main className="flex min-w-0 flex-1 flex-col">
 
         {error && (
           <div className="border-b border-danger/40 bg-danger/10 px-4 py-2 text-xs text-danger-ink">

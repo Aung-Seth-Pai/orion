@@ -42,7 +42,11 @@
     border-radius: 9px; position: relative;
     background: var(--void); font-family: var(--font-ui); color: var(--ink);
   }
-  .amb { position: absolute; top: 0; left: 0; height: 2px; z-index: 3; background: var(--accent); opacity: .7; }
+  /* The pomodoro bar, matching the app: a full-width track with the elapsed
+     portion filled. At 2px and 70% opacity with no track it was effectively
+     invisible until the session was half over. */
+  .amb { position: absolute; top: 0; left: 0; right: 0; height: 4px; z-index: 3; background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  .amb i { display: block; height: 100%; background: var(--accent); }
 
   .side { flex: none; width: 226px; background: var(--surface); border-right: 1px solid var(--rule); display: flex; flex-direction: column; }
   .brand {
@@ -179,7 +183,7 @@
 
       const [, activeName, activeHours] = ws[0];
       return `<div class="app">
-        <div class="amb" style="width:61%"></div>
+        <div class="amb"><i style="width:61%"></i></div>
         <div class="side">
           <div class="brand">ORION<span class="count">${ws.length}</span></div>
           <div class="nav">${nav}</div>

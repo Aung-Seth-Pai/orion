@@ -4,7 +4,7 @@ interface PomodoroHairlineProps {
 }
 
 /**
- * A two-pixel rule along the top edge of the window, filling as the pomodoro
+ * A thin rule along the top edge of the window, filling as the pomodoro
  * runs.
  *
  * The point is to make elapsed time *felt* rather than read. The numerals in
@@ -23,10 +23,14 @@ export default function PomodoroHairline({ fraction }: PomodoroHairlineProps) {
   return (
     <div
       aria-hidden
-      className="pointer-events-none absolute inset-x-0 top-0 z-20 h-0.5"
+      // The faint full-width track matters as much as the height. Without it
+      // there was nothing on screen at all until the pomodoro was well under
+      // way -- just an unexplained stub in the corner -- so the bar could not
+      // be read as a proportion, which is the one thing it is for.
+      className="pointer-events-none absolute inset-x-0 top-0 z-20 h-1 bg-accent/15"
     >
       <div
-        className="h-full bg-accent/70"
+        className="h-full bg-accent"
         // Width is set inline because it changes every second: a Tailwind
         // class per percentage would generate a hundred of them.
         //
