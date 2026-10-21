@@ -1,0 +1,255 @@
+/* ───────────────────────────────────────────────────────────────────────────
+   Orion design tokens.
+
+   THE RULE: a theme changes VALUES, never markup. Every theme below defines
+   the same token names; no component may branch on which theme is active. If a
+   design idea cannot be expressed as a value here, it does not become a theme —
+   it becomes a change to the one shared structure, applied to all of them.
+
+   That rule is what keeps four themes from costing four times the maintenance,
+   and it doubles as a test: switch themes and any surface that fails to change
+   still has a hardcoded literal in it.
+
+   Plain custom properties rather than Tailwind utilities, so design/*.html can
+   link this file directly with no build step and cannot drift from what ships.
+
+   The selector is [data-theme] rather than :root[data-theme] on purpose — the
+   design lab puts several themes on one page by setting the attribute on
+   wrapper elements.
+   ────────────────────────────────────────────────────────────────────────── */
+
+:root,
+[data-theme="graphite"] {
+  /* ── Surfaces: app background, panels, things sitting on panels ────────── */
+  --void: #09090b;
+  --surface: #18181b;
+  --raised: #27272a;
+  --raised-hover: #3f3f46;
+
+  /* ── Ink. Five named roles replacing seven unnamed zinc steps. Three was
+        the goal; four carry real meaning and -ghost is decoration only. ──── */
+  --ink-strong: #f4f4f5; /* headings, active row */
+  --ink: #e4e4e7; /* body */
+  --ink-muted: #a1a1aa; /* secondary, still AA on --surface */
+  --ink-faint: #71717a; /* metadata, timestamps */
+  --ink-ghost: #52525b; /* decorative/disabled ONLY — not contrast-bound */
+
+  /* ── Lines ─────────────────────────────────────────────────────────────── */
+  --rule: #27272a;
+  --rule-strong: #3f3f46;
+
+  /* ── Accent ────────────────────────────────────────────────────────────── */
+  --accent: #6366f1;
+  --accent-bright: #818cf8;
+  --accent-ink: #a5b4fc;
+  --accent-soft: rgba(99, 102, 241, 0.14);
+  --focus: #6366f1;
+  --selection: rgba(99, 102, 241, 0.35);
+
+  /* ── Signals. The -ink variants are the legible-on-dark text versions; the
+        bare token is for fills and borders. ─────────────────────────────── */
+  --positive: #10b981;
+  --positive-ink: #34d399;
+  --danger: #ef4444;
+  --danger-ink: #f87171;
+  --caution: #f59e0b;
+  --caution-ink: #fde68a;
+  --info-ink: #93c5fd;
+
+  /* ── Type. These stacks name Windows AND macOS faces — the old --font-sans
+        was Segoe-only and would fall to a generic sans on the Mac build. ─── */
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", -apple-system,
+    BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  /* Named --font-code, not --font-mono, because Tailwind's own @theme defines
+     --font-mono and the two would silently shadow each other at :root. */
+  --font-code: ui-monospace, "Cascadia Mono", "SF Mono", SFMono-Regular, Menlo,
+    Consolas, monospace;
+  --font-display: var(--font-ui);
+
+  --text-title: 15px;
+  --text-row: 13px;
+  --text-meta: 11px;
+  --text-micro: 10px;
+  --weight-row: 400;
+  --weight-active: 500;
+
+  /* ── Shape and density. "Card vs. rule" looks structural but is not: a card
+        is a background plus four borders, a rule is neither plus one. ────── */
+  --radius-row: 8px;
+  --radius-control: 6px;
+  --row-pad-y: 10px;
+  --row-pad-x: 12px;
+  --row-gap: 8px;
+  --row-bg: var(--raised);
+  --row-border: 1px solid var(--rule);
+  --row-border-bottom: 1px solid var(--rule);
+
+  --nav-pad-y: 7px;
+  --nav-active-bg: var(--accent-soft);
+  --nav-active-marker: 0px;
+  --mark-size: 21px;
+}
+
+/* ── A · DEEP FIELD ─────────────────────────────────────────────────────────
+   Cool near-black, warm ink. The accent hue is derived from the active
+   workspace at runtime (computed in TS, emitted as rgb — see the note at the
+   end of this file); the value here is the neutral used when nothing is
+   active. */
+[data-theme="deep-field"] {
+  --void: #0a0c10;
+  --surface: #0e1117;
+  --raised: #141922;
+  --raised-hover: #1c2330;
+
+  --ink-strong: #f5f3ef;
+  --ink: #e9e7e2;
+  --ink-muted: #8a90a0;
+  --ink-faint: #555c6b;
+  --ink-ghost: #3e4450;
+
+  --rule: rgba(255, 255, 255, 0.07);
+  --rule-strong: rgba(255, 255, 255, 0.13);
+
+  --accent: #7ca6e0;
+  --accent-bright: #9bbcec;
+  --accent-ink: #afc9f0;
+  --accent-soft: rgba(124, 166, 224, 0.14);
+  --selection: rgba(124, 166, 224, 0.32);
+  --focus: #7ca6e0;
+
+  --positive: #46c68f;
+  --positive-ink: #6fd9ac;
+  --danger: #e5695f;
+  --danger-ink: #f08c84;
+  --caution: #d9a441;
+  --caution-ink: #ebc77e;
+  --info-ink: #8fb8e8;
+
+  --text-row: 12.5px;
+  --text-meta: 10.5px;
+  --radius-row: 7px;
+}
+
+/* ── B · EMBER ──────────────────────────────────────────────────────────────
+   Warm near-black, display serif, rules instead of boxes. The signals are
+   warmed to match: emerald and pure red read as foreign objects on this
+   ground. Fraunces is loaded from Google Fonts in the lab only — the app
+   bundles it, so Orion's only network request stays the update check. */
+[data-theme="ember"] {
+  --void: #14110f;
+  --surface: #191513;
+  --raised: #201b18;
+  --raised-hover: #2a2320;
+
+  --ink-strong: #faf4ea;
+  --ink: #f2ebe1;
+  --ink-muted: #9c9187;
+  --ink-faint: #6a5f56;
+  --ink-ghost: #4e443c;
+
+  --rule: rgba(255, 240, 225, 0.09);
+  --rule-strong: rgba(255, 240, 225, 0.16);
+
+  --accent: #d07c43;
+  --accent-bright: #e09257;
+  --accent-ink: #e8a878;
+  --accent-soft: rgba(208, 124, 67, 0.14);
+  --selection: rgba(208, 124, 67, 0.32);
+  --focus: #d07c43;
+
+  --positive: #7d9d63;
+  --positive-ink: #9cba81;
+  --danger: #c85a4a;
+  --danger-ink: #dd8071;
+  --caution: #c9962f;
+  --caution-ink: #e0b765;
+  --info-ink: #9fb4c9;
+
+  --font-display: Fraunces, Georgia, "Times New Roman", serif;
+
+  --text-title: 27px;
+  --text-row: 15px;
+  --text-meta: 10.5px;
+  --text-micro: 9px;
+  --weight-active: 600;
+
+  --radius-row: 0px;
+  --radius-control: 4px;
+  --row-pad-y: 11px;
+  --row-pad-x: 0px;
+  --row-gap: 0px;
+  --row-bg: transparent;
+  --row-border: 0 solid transparent;
+  --row-border-bottom: 1px solid var(--rule);
+
+  --nav-pad-y: 8px;
+  --nav-active-bg: transparent;
+  --mark-size: 20px;
+}
+
+/* ── C · ALMANAC ────────────────────────────────────────────────────────────
+   Monospaced throughout and achromatic: the accent IS the ink, so identity is
+   carried by the constellations alone. The signals keep a trace of hue — a
+   delete confirmation that reads as ordinary text is a hazard, not a purity
+   win. */
+[data-theme="almanac"] {
+  --void: #0b0d11;
+  --surface: #0f1217;
+  --raised: #171c24;
+  --raised-hover: #1e242e;
+
+  --ink-strong: #f5f4f1;
+  --ink: #ebeae6;
+  --ink-muted: #848994;
+  --ink-faint: #4f555f;
+  --ink-ghost: #3a404a;
+
+  --rule: rgba(255, 255, 255, 0.055);
+  --rule-strong: rgba(255, 255, 255, 0.12);
+
+  --accent: #ebeae6;
+  --accent-bright: #ffffff;
+  --accent-ink: #ebeae6;
+  --accent-soft: rgba(255, 255, 255, 0.07);
+  --selection: rgba(255, 255, 255, 0.18);
+  --focus: #ebeae6;
+
+  --positive: #86a894;
+  --positive-ink: #a3c2af;
+  --danger: #c77b72;
+  --danger-ink: #d99a92;
+  --caution: #b89a62;
+  --caution-ink: #d0b683;
+  --info-ink: #8fa0b5;
+
+  --font-ui: var(--font-code);
+  --font-display: var(--font-code);
+
+  --text-title: 12.5px;
+  --text-row: 12px;
+  --text-meta: 10px;
+  --text-micro: 8.5px;
+  --weight-active: 500;
+
+  --radius-row: 0px;
+  --radius-control: 3px;
+  --row-pad-y: 5.5px;
+  --row-pad-x: 0px;
+  --row-gap: 0px;
+  --row-bg: transparent;
+  --row-border: 0 solid transparent;
+  --row-border-bottom: 1px solid var(--rule);
+
+  --nav-pad-y: 4.5px;
+  --nav-active-bg: var(--raised);
+  --nav-active-marker: 2px;
+  --mark-size: 18px;
+}
+
+/* ── Runtime overrides ──────────────────────────────────────────────────────
+   Deep field derives its accent from the active workspace's colour. That is
+   computed in TypeScript and written to --accent / --accent-ink / --accent-soft
+   on the root as plain rgb(), deliberately NOT as CSS oklch(): Tauri's macOS
+   webview is whatever Safari ships with the user's OS, and older ones predate
+   oklch(). Doing the conversion ourselves removes the dependency entirely and
+   makes the mapping unit-testable. */

@@ -65,11 +65,40 @@ function mst(pts) {
 }
 
 /**
- * @param name  workspace name — the identity
- * @param depth 0..1 accumulated focus time, floored by the caller
+ * Maps accumulated focus hours to a 0..1 depth, calibrated against the USER'S
+ * OWN practice rather than against an absolute scale.
+ *
+ * An absolute ceiling is the obvious implementation and it is wrong. Pick 45
+ * hours and a casual user whose largest workspace is three hours sees twelve
+ * identical floor-level marks forever, while someone with two thousand hours
+ * sees twelve identical saturated ones. The mark stops carrying information in
+ * both directions, and which of those you get depends entirely on whose data
+ * the constant was tuned against.
+ *
+ * So the ceiling is the user's own busiest workspace -- floored, so that a
+ * fresh install does not crown whichever workspace happened to be opened first.
+ * Below CEILING_FLOOR_HOURS of real use nothing is fully lit, which is the
+ * honest reading: nothing has been invested yet.
+ */
+const CEILING_FLOOR_HOURS = 20;
+const DEPTH_FLOOR = 0.16;
+
+function depthFromHours(hours, maxHours) {
+  const ceiling = Math.max(maxHours || 0, CEILING_FLOOR_HOURS);
+  const ratio = Math.max(0, hours || 0) / ceiling;
+  // Compressed near the top: the difference between 2h and 10h should read
+  // more loudly than the difference between 300h and 400h.
+  const curved = Math.log1p(ratio * 9) / Math.log1p(9);
+  return Math.max(DEPTH_FLOOR, Math.min(1, curved));
+}
+
+/**
+ * @param seed  stable workspace identity. The app passes the workspace ID, not
+ *              its name, so renaming a workspace keeps its constellation.
+ * @param depth 0..1 from depthFromHours()
  * @param size  the px size it will be DISPLAYED at, which drives stroke weights
  */
-function constellation(name, depth, size = 22, opts = {}) {
+function constellation(seed, depth, size = 22, opts = {}) {
   const {
     cols = 3,
     rows = 2,
@@ -84,7 +113,7 @@ function constellation(name, depth, size = 22, opts = {}) {
     fill = 0.72,
   } = opts;
 
-  const rand = rng(hash(name));
+  const rand = rng(hash(String(seed)));
   const count = minStars + Math.floor(rand() * (maxStars - minStars + 1));
   const pts = points(rand, count, cols, rows, jitter);
   const edges = mst(pts);
@@ -119,14 +148,20 @@ function constellation(name, depth, size = 22, opts = {}) {
   const rPrimary = (primaryPx * k).toFixed(2);
   const rSecondary = (secondaryPx * k).toFixed(2);
 
-  // Lines resolve later than stars: a new workspace is scattered points with no
-  // figure drawn yet, and the shape emerges as hours accumulate.
-  const lineAlpha = Math.max(0, (depth - 0.22) / 0.78) * 0.7;
+  // Shape and investment are kept as SEPARATE meanings: the figure is always
+  // drawn in full, and only its brightness scales with accumulated time.
+  //
+  // An earlier version withheld the lines until a workspace had some hours on
+  // it, so that the figure "emerged" as you used it. It reads nicely and it is
+  // wrong: rendering a fresh install showed three workspaces as three near
+  // identical scatters of dots, which is precisely when a new user most needs
+  // to tell them apart. The mark cannot do its job as identity if it only
+  // becomes an identity later.
+  const lineAlpha = (0.3 + depth * 0.7) * 0.62;
   const starAlpha = 0.3 + depth * 0.7;
 
   const parts = [];
   for (const [i, j] of edges) {
-    if (lineAlpha < 0.02) break;
     parts.push(
       `<line x1="${pts[i].x.toFixed(2)}" y1="${pts[i].y.toFixed(2)}" x2="${pts[j].x.toFixed(2)}" y2="${pts[j].y.toFixed(2)}" stroke="currentColor" stroke-width="${strokeW}" stroke-linecap="round" opacity="${lineAlpha.toFixed(3)}"/>`
     );

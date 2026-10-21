@@ -45,9 +45,12 @@
       ["Stats", 4], ["Maths", 12], ["MLOps, DevOps", 6],
       ["Language", 1], ["Entertainment", 22], ["Reading", 0],
     ];
-    // Compressed so the top end does not flatten everything below it,
-    // and floored so a new workspace still reads as intentional.
-    const depth = (h) => Math.max(0.16, Math.min(1, Math.log1p(h) / Math.log1p(45)));
+    // The ramp lives in mark.js and is calibrated against the user's own
+    // busiest workspace, so this page must pass that maximum in rather than
+    // keep a constant of its own -- an absolute ceiling here was exactly the
+    // bug that made the marks meaningless for anyone else's data.
+    const MAX = Math.max(...WS.map(([, h]) => h));
+    const depth = (h) => depthFromHours(h, MAX);
 
     grid.innerHTML = WS.map(([n, h]) =>
       `<div class="cell"><div class="big">${constellation(n, depth(h), 86)}</div>
@@ -57,8 +60,9 @@
       `<div class="row ${i === 0 ? "on" : ""}"><div class="mk">${constellation(n, depth(h), 22)}</div>
        <div class="lbl">${n}</div><div class="t">${h}h</div></div>`).join("");
 
-    ramp.innerHTML = [0, 1, 4, 12, 30, 80].map((h) =>
-      `<div class="row"><div class="mk">${constellation("SE learning", depth(h), 22)}</div>
+    const RAMP = [0, 1, 4, 12, 30, 80];
+    ramp.innerHTML = RAMP.map((h) =>
+      `<div class="row"><div class="mk">${constellation("SE learning", depthFromHours(h, Math.max(...RAMP)), 22)}</div>
        <div class="lbl">SE learning</div><div class="t">${h}h</div></div>`).join("");
   </script>
 </body>

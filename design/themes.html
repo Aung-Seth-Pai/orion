@@ -1,0 +1,214 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Orion — themes</title>
+<!--
+  One composition, four themes.
+
+  Everything below is styled with var(--token) and NOTHING branches on which
+  theme is active: the four apps on this page are the same markup with a
+  different data-theme attribute on the wrapper. That is the whole contract, and
+  this page is how it gets verified — if a surface looks identical across all
+  four, it is reading a value that is not a token.
+
+  tokens.css is linked from src/, not copied, so the guide cannot drift from
+  what ships. Fraunces comes from Google Fonts HERE ONLY; the app bundles it.
+
+  Query params:
+    ?theme=ember          render one theme instead of all four
+    ?fixture=hostile      swap the workspace data (see FIXTURES below)
+-->
+<link rel="stylesheet" href="../src/styles/tokens.css" />
+<link
+  href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&display=swap"
+  rel="stylesheet"
+/>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #050608; }
+  body { padding: 24px; font-family: system-ui, sans-serif; }
+
+  .caption { font: 600 11px/1 system-ui; letter-spacing: .13em; text-transform: uppercase; color: #5a6070; margin: 0 0 9px 2px; }
+  .caption b { color: #a8afbe; }
+  .note { font: 400 11.5px/1.55 system-ui; color: #565d6b; margin: 8px 2px 30px; max-width: 900px; }
+
+  /* Tall scripts -- Burmese, Thai, Devanagari -- stack marks above and below
+     the Latin x-height band and get clipped by a tight line-height, which the
+     hostile fixture is what surfaced. Every element carrying a user-supplied
+     name sets one explicitly. */
+
+  /* ── The app shell. Token-driven from here down. ─────────────────────── */
+  .app {
+    width: 900px; height: 460px; display: flex; overflow: hidden;
+    border-radius: 9px; position: relative;
+    background: var(--void); font-family: var(--font-ui); color: var(--ink);
+  }
+  .amb { position: absolute; top: 0; left: 0; height: 2px; z-index: 3; background: var(--accent); opacity: .7; }
+
+  .side { flex: none; width: 226px; background: var(--surface); border-right: 1px solid var(--rule); display: flex; flex-direction: column; }
+  .brand {
+    display: flex; align-items: center; height: 44px; padding: 0 12px; gap: 8px;
+    font-family: var(--font-display); font-size: var(--text-meta);
+    letter-spacing: .18em; font-weight: 600; color: var(--ink-strong);
+    border-bottom: 1px solid var(--rule); flex: none;
+  }
+  .brand .count { margin-left: auto; letter-spacing: 0; font-family: var(--font-ui); font-weight: 400; font-size: var(--text-micro); color: var(--ink-faint); }
+
+  .nav { padding: 6px 8px; overflow: hidden; }
+  .navrow {
+    display: flex; align-items: center; gap: 10px;
+    padding: var(--nav-pad-y) 8px;
+    border-radius: var(--radius-control);
+    border-left: var(--nav-active-marker) solid transparent;
+    font-size: var(--text-row); font-weight: var(--weight-row);
+    color: var(--ink-muted);
+  }
+  .navrow.on { background: var(--nav-active-bg); border-left-color: var(--accent); color: var(--ink-strong); font-weight: var(--weight-active); }
+  .navrow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.55; }
+  .navrow .hr { font-size: var(--text-micro); color: var(--ink-faint); font-variant-numeric: tabular-nums; flex: none; }
+  .mk { flex: none; width: var(--mark-size); height: var(--mark-size); color: var(--ink-faint); }
+  .navrow.on .mk { color: var(--accent); }
+  .mk svg { width: 100%; height: 100%; display: block; }
+
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .head { display: flex; align-items: baseline; gap: 12px; padding: 14px 18px 12px; border-bottom: 1px solid var(--rule); flex: none; }
+  .head .ttl { font-family: var(--font-display); font-size: var(--text-title); font-weight: 600; color: var(--ink-strong); letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; line-height: 1.45; }
+  .head .tot { font-size: var(--text-meta); color: var(--ink-faint); flex: none; }
+  .head .clk { margin-left: auto; font-family: var(--font-code); font-size: var(--text-row); color: var(--ink-strong); font-variant-numeric: tabular-nums; }
+  .head .pom { font-size: var(--text-micro); color: var(--accent-ink); letter-spacing: .08em; }
+
+  .body { padding: 12px 18px; overflow: hidden; }
+  .sect { font-size: var(--text-micro); letter-spacing: .2em; color: var(--ink-faint); text-transform: uppercase; padding-bottom: 8px; }
+  .sect:not(:first-child) { padding-top: 14px; }
+
+  /* A card and a rule differ only in background and which borders are drawn. */
+  .row {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--row-bg);
+    border: var(--row-border);
+    border-bottom: var(--row-border-bottom);
+    border-radius: var(--radius-row);
+    padding: var(--row-pad-y) var(--row-pad-x);
+    margin-bottom: var(--row-gap);
+  }
+  .row .kind { font-size: var(--text-micro); letter-spacing: .09em; color: var(--ink-faint); width: 30px; flex: none; }
+  .row .nm { font-family: var(--font-display); font-size: var(--text-row); color: var(--ink-strong); flex: none; max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.55; }
+  .row .tg { flex: 1; min-width: 0; font-size: var(--text-meta); color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Present in EVERY theme: the row click is already taken by copy-to-clipboard. */
+  .row .go { flex: none; font-size: var(--text-micro); color: var(--accent-ink); border: 1px solid var(--accent); border-radius: var(--radius-control); padding: 3px 9px; opacity: .85; }
+</style>
+<body>
+  <div id="out"></div>
+  <script src="mark.js"></script>
+  <script>
+    /* ── FIXTURES ───────────────────────────────────────────────────────────
+       Deliberately NOT one developer's real workspaces. A design tuned against
+       eight tidy Latin names between 2 and 41 hours will break the first time
+       it meets someone else's data, so the hostile sets are permanent
+       furniture here, not a one-off check.
+       Each entry: [id, name, hours].                                        */
+    const FIXTURES = {
+      typical: [
+        ["w1", "SE learning", 41], ["w2", "Advanced Python", 2],
+        ["w3", "DAE", 18], ["w4", "AI/ML", 27], ["w5", "Data Science", 9],
+        ["w6", "Maths", 12], ["w7", "Entertainment", 22], ["w8", "Stats", 4],
+      ],
+      /* Brand new install: every mark must read faint-but-present, never broken,
+         and no workspace may be crowned just for being first. */
+      fresh: [["n1", "Personal", 0], ["n2", "Work", 0], ["n3", "Reading", 0]],
+      single: [["s1", "Thesis", 0.5]],
+      /* Ten years of use. The ramp must not saturate into twelve identical marks. */
+      heavy: [
+        ["h1", "Client work", 2410], ["h2", "Open source", 1180],
+        ["h3", "Research", 760], ["h4", "Admin", 390], ["h5", "Reading", 240],
+        ["h6", "Teaching", 150], ["h7", "Side project", 90], ["h8", "Archive", 30],
+      ],
+      /* Scripts, directions and lengths the layout has to survive. */
+      hostile: [
+        ["x1", "မြန်မာစာ လေ့လာခြင်း", 14],
+        ["x2", "日本語の学習とリスニング練習", 31],
+        ["x3", "한국어", 6],
+        ["x4", "العربية", 3],
+        ["x5", "Machine Learning Engineering — Advanced Topics and Reading Group 2026", 52],
+        ["x6", "X", 0],
+        ["x7", "🔥 Deep work", 19],
+        ["x8", "Проект", 8],
+      ],
+    };
+
+    const RES = [
+      ["OOP Book (Thet Khaing)", "Calibre Library \\ Thet Khaing \\ Object-Oriented-Programming.pdf", "PDF"],
+      ["Design Patterns", "refactoring.guru/design-patterns/catalog", "WEB"],
+      ["Designing Data-Intensive Apps", "Calibre Library \\ designing-data-intensive.pdf", "PDF"],
+      ["Course repo", "C:\\src\\se-learning", "DIR"],
+    ];
+    const SCR = [["Sync notes to Drive", "PS"], ["Rebuild flashcards", "PY"]];
+
+    const THEMES = [
+      ["graphite", "Graphite", "The look Orion ships with today, expressed entirely in tokens. Keeping it as the default means no one's app changes under them on update — and writing it as a theme is what proves the token set is complete rather than quietly shaped around the other three."],
+      ["deep-field", "Deep field", "Cool near-black, warm ink, cards. The accent takes its hue from the active workspace at runtime with saturation and lightness pinned, so switching context re-tints the room and nothing can go garish."],
+      ["ember", "Ember", "Warm near-black, display serif, hairline rules instead of boxes. The most spacious of the four, and the one with an actual point of view."],
+      ["almanac", "Almanac", "Monospaced, achromatic, tight. Fits the most on a 1280×752 panel and leans hardest on the constellations, since nothing else carries identity."],
+    ];
+
+    const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+    function app(ws) {
+      const maxHours = Math.max(0, ...ws.map(([, , h]) => h));
+      const nav = ws.map(([id, name, h], i) => `
+        <div class="navrow${i === 0 ? " on" : ""}">
+          <div class="mk">${constellation(id, depthFromHours(h, maxHours), 21)}</div>
+          <div class="nm" dir="auto">${esc(name)}</div>
+          <div class="hr">${h >= 1 ? Math.round(h) + "h" : "—"}</div>
+        </div>`).join("");
+
+      const rows = RES.map(([n, t, k]) => `
+        <div class="row">
+          <div class="kind">${k}</div>
+          <div class="nm" dir="auto">${esc(n)}</div>
+          <div class="tg" dir="auto">${esc(t)}</div>
+          <div class="go">Launch</div>
+        </div>`).join("");
+
+      const scripts = SCR.map(([n, k]) => `
+        <div class="row">
+          <div class="kind">${k}</div>
+          <div class="nm" dir="auto">${esc(n)}</div>
+          <div class="tg"></div>
+          <div class="go">Run</div>
+        </div>`).join("");
+
+      const [, activeName, activeHours] = ws[0];
+      return `<div class="app">
+        <div class="amb" style="width:61%"></div>
+        <div class="side">
+          <div class="brand">ORION<span class="count">${ws.length}</span></div>
+          <div class="nav">${nav}</div>
+        </div>
+        <div class="main">
+          <div class="head">
+            <div class="ttl" dir="auto">${esc(activeName)}</div>
+            <div class="tot">${activeHours ? activeHours + "h total" : "not started"}</div>
+            <div class="clk">14:29</div>
+            <div class="pom">POMO</div>
+          </div>
+          <div class="body">
+            <div class="sect">Resources · ${RES.length}</div>
+            ${rows}
+            <div class="sect">Scripts · ${SCR.length}</div>
+            ${scripts}
+          </div>
+        </div>
+      </div>`;
+    }
+
+    const q = new URLSearchParams(location.search);
+    const fixture = FIXTURES[q.get("fixture")] ? q.get("fixture") : "typical";
+    const only = q.get("theme");
+    const shown = only ? THEMES.filter(([k]) => k === only) : THEMES;
+
+    out.innerHTML = shown.map(([key, label, note]) => `
+      <p class="caption"><b>${label}</b> &nbsp;·&nbsp; ${fixture}</p>
+      <div data-theme="${key}">${app(FIXTURES[fixture])}</div>
+      <p class="note">${note}</p>`).join("");
+  </script>
+</body>

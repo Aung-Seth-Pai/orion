@@ -1,8 +1,44 @@
 @import "tailwindcss";
+@import "./styles/tokens.css";
 
+/* Bridge the design tokens into Tailwind so components can write bg-surface,
+   text-ink-muted, border-rule and so on. Each utility resolves to the token,
+   and the token resolves to whichever theme is active on <html> — so a theme
+   switch needs no rebuild and no component is aware of it.
+
+   --font-sans here replaces a Segoe-only stack that would have fallen back to a
+   generic sans on the macOS build. */
 @theme {
-  --font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
-    sans-serif;
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-code);
+
+  --color-void: var(--void);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-raised-hover: var(--raised-hover);
+
+  --color-ink-strong: var(--ink-strong);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
+  --color-ink-ghost: var(--ink-ghost);
+
+  --color-rule: var(--rule);
+  --color-rule-strong: var(--rule-strong);
+
+  --color-accent: var(--accent);
+  --color-accent-bright: var(--accent-bright);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-focus: var(--focus);
+
+  --color-positive: var(--positive);
+  --color-positive-ink: var(--positive-ink);
+  --color-danger: var(--danger);
+  --color-danger-ink: var(--danger-ink);
+  --color-caution: var(--caution);
+  --color-caution-ink: var(--caution-ink);
+  --color-info-ink: var(--info-ink);
 }
 
 html,
@@ -13,11 +49,11 @@ body,
 }
 
 body {
-  @apply bg-zinc-950 text-zinc-200 antialiased select-none;
+  @apply bg-void text-ink antialiased select-none;
 }
 
 ::selection {
-  background-color: rgb(99 102 241 / 0.35);
+  background-color: var(--selection);
 }
 
 ::-webkit-scrollbar {
@@ -29,10 +65,10 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgb(63 63 70 / 0.6);
+  background: var(--rule-strong);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgb(82 82 91 / 0.8);
+  background: var(--ink-ghost);
 }
