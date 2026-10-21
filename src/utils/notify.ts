@@ -47,7 +47,7 @@ export function playBeep(): void {
 }
 
 /**
- * Attempts a native Windows toast. Returns null on success, or the reason it
+ * Attempts a native OS notification. Returns null on success, or the reason it
  * failed.
  *
  * Errors are RETURNED rather than swallowed. This used to sit inside a bare
@@ -55,10 +55,11 @@ export function playBeep(): void {
  * a working one and the only symptom was silence — the reason the test button in
  * Settings exists.
  *
- * Note the honest limit of this check: Windows can accept a toast and still
- * never draw a banner (Focus Assist, a per-app setting, policy). Success here
- * means "Windows took it", not "the user saw it". That gap is exactly why the
- * in-app alert window is the primary notification.
+ * Note the honest limit of this check: the OS can accept a notification and
+ * still never draw a banner (Focus Assist or Do Not Disturb, a per-app setting,
+ * policy; on macOS an unsigned build may not be permitted to post one at all).
+ * Success here means "the OS took it", not "the user saw it". That gap is
+ * exactly why the in-app alert window is the primary notification.
  */
 export async function sendNativeToast(
   title: string,
@@ -70,10 +71,11 @@ export async function sendNativeToast(
       granted = (await requestPermission()) === "granted";
     }
     if (!granted) {
-      return "Windows notification permission was not granted for Orion.";
+      return "Notification permission was not granted for Orion.";
     }
-    // Sent from Rust rather than via sendNotification so the toast carries an
-    // explicit icon path; Windows frequently suppresses iconless banners.
+    // Sent from Rust rather than via sendNotification so the notification
+    // carries an explicit icon path; Windows frequently suppresses iconless
+    // banners.
     await invoke("notify_timer_complete", { title, body });
     return null;
   } catch (e) {

@@ -31,7 +31,23 @@ export async function exportBackupToFile(): Promise<string | null> {
   return filePath;
 }
 
-export function importData(jsonPayload: string): Promise<void> {
+/** What an import brought in, so the UI can report it rather than just "done". */
+export interface ImportSummary {
+  workspaces: number;
+  resources: number;
+  scripts: number;
+  timerLogs: number;
+  tasks: number;
+  envVars: number;
+  /** Titles of imported scripts that cannot run on this platform (capped). */
+  unrunnableScripts: string[];
+  /** How many there were in total, which may exceed the titles listed. */
+  unrunnableCount: number;
+  /** The script types involved, already labelled for display. */
+  unrunnableTypes: string[];
+}
+
+export function importData(jsonPayload: string): Promise<ImportSummary> {
   return invoke("import_data", { jsonPayload });
 }
 

@@ -12,8 +12,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [windows-latest]
+        include:
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            # Windows is the platform the in-app updater serves, so this job
+            # owns latest.json.
+            updater_json: true
+          # macos-15 runners are Apple Silicon. Pinned rather than -latest so
+          # the architecture cannot change under us without a visible edit.
+          - platform: macos-15
+            target: aarch64-apple-darwin
+            # The macOS build is unsigned, so it is deliberately left out of
+            # latest.json. The updater would download the archive, Gatekeeper
+            # would quarantine it, and the in-place replacement would fail --
+            # advertising an update path that cannot complete is worse than
+            # having none. macOS users update by downloading the new .dmg, which
+            # the README explains. Revisit if the app is ever notarized.
+            updater_json: false
     runs-on: ${{ matrix.platform }}
+    name: ${{ matrix.target }}
 
     steps:
       - name: Checkout repository
@@ -27,7 +44,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ matrix.target }}
 
       - name: Install frontend dependencies
         run: npm install
@@ -47,7 +64,7 @@ jobs:
               echo 'ORION_NOTES_EOF'
             } >> "$GITHUB_OUTPUT"
           else
-            echo "body=Orion release. Download the .exe below to install." >> "$GITHUB_OUTPUT"
+            echo "body=Orion release. Download the installer for your platform below." >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build and Release Tauri app
@@ -56,9 +73,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          # An ad-hoc signature, not a Developer ID. This is not notarization
+          # and does not get past Gatekeeper, but the arm64 kernel refuses to
+          # execute a binary with no signature at all, so without it the .app
+          # fails to launch rather than merely warning.
+          APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos-15' && '-' || '' }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Orion ${{ github.ref_name }}"
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
+          args: --target ${{ matrix.target }}
+          includeUpdaterJson: ${{ matrix.updater_json }}

@@ -87,8 +87,8 @@ pub fn unrunnable_reason(script_type: &str) -> Option<String> {
 pub fn script_label(script_type: &str) -> &str {
     match script_type {
         "powershell" => "PowerShell",
-        "cmd" => "Batch",
-        "wsl_bash" => "WSL bash",
+        "cmd" => "CMD",
+        "wsl_bash" => "WSL Bash",
         "python" => "Python",
         "node" => "Node.js",
         "zsh" => "zsh",
@@ -163,8 +163,8 @@ mod tests {
         // "a label must differ from its id" rule would be wrong rather than
         // strict.
         assert_eq!(script_label("powershell"), "PowerShell");
-        assert_eq!(script_label("cmd"), "Batch");
-        assert_eq!(script_label("wsl_bash"), "WSL bash");
+        assert_eq!(script_label("cmd"), "CMD");
+        assert_eq!(script_label("wsl_bash"), "WSL Bash");
         assert_eq!(script_label("node"), "Node.js");
     }
 

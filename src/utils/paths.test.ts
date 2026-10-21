@@ -39,6 +39,16 @@ describe("displayTarget", () => {
     expect(displayTarget("FILE:///C:/tmp/a.txt")).toBe("C:\\tmp\\a.txt");
   });
 
+  it("shows a POSIX path with forward slashes, on either platform", () => {
+    // A path from a Mac must not be shown as \Users\me\cv.pdf just because
+    // the window reading it happens to be on Windows: it is the path to a file
+    // on another machine, and the only useful form is the one that machine
+    // uses. The URL's shape decides, not the host.
+    expect(displayTarget("file:///Users/me/My%20Docs/cv.pdf")).toBe(
+      "/Users/me/My Docs/cv.pdf"
+    );
+  });
+
   it("falls back to the raw value on a malformed escape", () => {
     // decodeURIComponent throws on a lone '%'; showing it raw beats crashing
     // the card it is rendered in.

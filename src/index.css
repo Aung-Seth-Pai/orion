@@ -49,6 +49,8 @@
   --color-kind-python: var(--kind-python);
   --color-kind-node: var(--kind-node);
   --color-kind-wsl: var(--kind-wsl);
+  --color-kind-zsh: var(--kind-zsh);
+  --color-kind-bash: var(--kind-bash);
 }
 
 html,

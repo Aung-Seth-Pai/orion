@@ -15,7 +15,8 @@ use crate::db::Db;
 use crate::platform;
 use crate::models::{
     AiStatus, AutomationScript, BackupPayload, EnvVar, NewResource, NewScript, NewTask,
-    NewTimerLog, NewWorkspace, Resource, ResourcePatch, ResourceSuggestion, ScriptPatch,
+    ImportSummary, NewTimerLog, NewWorkspace, PlatformInfo, Resource, ResourcePatch,
+    ResourceSuggestion, ScriptPatch,
     SearchResult, Task, TimerLog, Workspace, WorkspacePatch,
 };
 
@@ -2904,8 +2905,71 @@ fn insert_env_var(tx: &rusqlite::Transaction, var: &EnvVar) -> Result<(), String
     .map_err(|e| format!("failed to import variable '{}': {e}", var.env_key))
 }
 
+/// Reports what this platform can do, for a frontend that must not guess.
+///
+/// Synchronous work, but kept a command rather than baked into the bundle so a
+/// single build of the frontend is correct on either platform.
 #[tauri::command]
-pub async fn import_data(db: State<'_, Db>, json_payload: String) -> Result<(), String> {
+pub fn get_platform_info() -> PlatformInfo {
+    let own = |xs: &[&str]| xs.iter().map(|s| s.to_string()).collect();
+    PlatformInfo {
+        os: platform::OS.to_string(),
+        runnable_script_types: own(platform::RUNNABLE_SCRIPT_TYPES),
+        all_script_types: own(platform::ALL_SCRIPT_TYPES),
+        browsers: own(platform::PREFERRED_APPS),
+        terminal_label: platform::TERMINAL_LABEL.to_string(),
+        file_manager_label: platform::FILE_MANAGER_LABEL.to_string(),
+        path_separator: platform::PATH_SEPARATOR.to_string(),
+    }
+}
+
+/// How many script titles to name before falling back to a bare count. Enough
+/// that a typical crossing lists them all, few enough that a large backup
+/// cannot produce an unreadable message.
+const MAX_LISTED_UNRUNNABLE: usize = 5;
+
+/// Describes what was just imported, including which scripts came across intact
+/// but cannot run on this platform.
+///
+/// Computed from the payload after the commit rather than during it: the import
+/// is deliberately permissive — every script is stored whatever its type — and
+/// this keeps the reporting from being mistaken for validation that could
+/// refuse a row.
+fn summarise_import(payload: &BackupPayload) -> ImportSummary {
+    let mut summary = ImportSummary {
+        workspaces: payload.workspaces.len(),
+        resources: payload.resources.len(),
+        scripts: payload.automation_scripts.len(),
+        timer_logs: payload.timer_logs.len(),
+        tasks: payload.tasks.len(),
+        env_vars: payload.workspace_env_vars.len(),
+        ..Default::default()
+    };
+
+    let mut types: Vec<String> = Vec::new();
+    for script in &payload.automation_scripts {
+        if platform::can_run_script(&script.script_type) {
+            continue;
+        }
+        summary.unrunnable_count += 1;
+        if summary.unrunnable_scripts.len() < MAX_LISTED_UNRUNNABLE {
+            summary.unrunnable_scripts.push(script.title.clone());
+        }
+        let label = platform::script_label(&script.script_type).to_string();
+        if !types.contains(&label) {
+            types.push(label);
+        }
+    }
+    summary.unrunnable_types = types;
+
+    summary
+}
+
+#[tauri::command]
+pub async fn import_data(
+    db: State<'_, Db>,
+    json_payload: String,
+) -> Result<ImportSummary, String> {
     if json_payload.len() > MAX_IMPORT_BYTES {
         return Err("Backup file is too large (max 32 MB)".into());
     }
@@ -2974,7 +3038,8 @@ pub async fn import_data(db: State<'_, Db>, json_payload: String) -> Result<(), 
         // If any insert above failed, dropping `tx` rolls everything back.
         tx.commit()
             .map_err(|e| format!("failed to commit import: {e}"))?;
-        Ok(())
+
+        Ok(summarise_import(&payload))
     })
     .await
     .map_err(|e| format!("background task failed: {e}"))?
@@ -3877,6 +3942,97 @@ mod tests {
         assert!(validate_resource_fields("folder", "F", "C:\\tmp", "default").is_ok());
     }
 
+    fn import_summary(types: &[(&str, &str)]) -> ImportSummary {
+        let payload = BackupPayload {
+            version: BACKUP_VERSION,
+            exported_at: "2026-01-01 00:00:00".to_string(),
+            workspaces: vec![],
+            resources: vec![],
+            automation_scripts: types
+                .iter()
+                .enumerate()
+                .map(|(i, (title, script_type))| AutomationScript {
+                    id: format!("s{i}"),
+                    workspace_id: None,
+                    title: (*title).to_string(),
+                    script_type: (*script_type).to_string(),
+                    script_content: "echo hi".to_string(),
+                    sort_order: i as i64,
+                    created_at: "2026-01-01 00:00:00".to_string(),
+                })
+                .collect(),
+            timer_logs: vec![],
+            tasks: vec![],
+            workspace_env_vars: vec![],
+        };
+        summarise_import(&payload)
+    }
+
+    #[test]
+    fn an_import_of_only_portable_scripts_reports_nothing_to_warn_about() {
+        let summary = import_summary(&[("Tidy", "python"), ("Build", "node")]);
+        assert_eq!(summary.scripts, 2);
+        assert_eq!(summary.unrunnable_count, 0);
+        assert!(summary.unrunnable_scripts.is_empty());
+        assert!(summary.unrunnable_types.is_empty());
+    }
+
+    #[test]
+    fn scripts_from_the_other_platform_are_counted_not_dropped() {
+        // The crossing this exists for. Whichever platform the test runs on,
+        // Python and Node come across runnable and the other platform's own
+        // types do not — and the count still covers every script imported.
+        let foreign = if cfg!(target_os = "windows") {
+            [("Mac tidy", "zsh"), ("Mac build", "bash")]
+        } else {
+            [("Deploy", "powershell"), ("Clean", "cmd")]
+        };
+        let summary = import_summary(&[
+            ("Tidy", "python"),
+            (foreign[0].0, foreign[0].1),
+            (foreign[1].0, foreign[1].1),
+        ]);
+
+        assert_eq!(summary.scripts, 3, "every script is imported regardless");
+        assert_eq!(summary.unrunnable_count, 2);
+        assert_eq!(
+            summary.unrunnable_scripts,
+            vec![foreign[0].0.to_string(), foreign[1].0.to_string()]
+        );
+        assert_eq!(summary.unrunnable_types.len(), 2);
+    }
+
+    #[test]
+    fn the_listed_titles_are_capped_but_the_count_is_not() {
+        let unrunnable = if cfg!(target_os = "windows") {
+            "zsh"
+        } else {
+            "powershell"
+        };
+        let owned: Vec<(String, &str)> = (0..9)
+            .map(|i| (format!("Script {i}"), unrunnable))
+            .collect();
+        let refs: Vec<(&str, &str)> =
+            owned.iter().map(|(t, k)| (t.as_str(), *k)).collect();
+
+        let summary = import_summary(&refs);
+        assert_eq!(summary.unrunnable_count, 9);
+        assert_eq!(summary.unrunnable_scripts.len(), MAX_LISTED_UNRUNNABLE);
+        // One type, named once — not nine times.
+        assert_eq!(summary.unrunnable_types.len(), 1);
+    }
+
+    #[test]
+    fn an_unknown_type_from_a_newer_build_is_reported_rather_than_rejected() {
+        // A backup written by a future version naming a type this build has
+        // never heard of still imports; it is simply flagged as unrunnable.
+        let summary = import_summary(&[("Future", "fish")]);
+        assert_eq!(summary.scripts, 1);
+        assert_eq!(summary.unrunnable_count, 1);
+        assert_eq!(summary.unrunnable_types, vec!["fish".to_string()]);
+    }
+
+    #[test]
     #[test]
     fn parses_search_scopes() {
         assert_eq!(

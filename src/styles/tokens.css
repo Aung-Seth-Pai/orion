@@ -293,6 +293,8 @@
   --kind-python: #7dd3fc;
   --kind-node: #86efac;
   --kind-wsl: #fdba74;
+  --kind-zsh: #d8b4fe;
+  --kind-bash: #f0abfc;
 }
 
 /* ── Motion ─────────────────────────────────────────────────────────────────

@@ -21,7 +21,9 @@ import {
   setSpotlightShortcut,
   updateSetting,
 } from "../api/settings";
+import type { ImportSummary } from "../api/settings";
 import { getAiStatus, reindexAll, removeAiModel } from "../api/ai";
+import { platform } from "../utils/platform";
 import ShortcutInput from "./ShortcutInput";
 import type { AiStatus } from "../types";
 import ThemePicker from "./ThemePicker";
@@ -31,6 +33,28 @@ const DEFAULT_IDE_KEY = "default_ide";
 const PYTHON_PATH_KEY = "python_path";
 const NODE_PATH_KEY = "node_path";
 const POMODORO_MINUTES_KEY = "pomodoro_minutes";
+/**
+ * Tells the user which imported scripts cannot run here, when any cannot.
+ *
+ * Worth saying once, clearly, at the moment of import: a setup that came from
+ * the other platform keeps every script it had, and the ones belonging to that
+ * platform are simply inert. Left unsaid, the user meets them one at a time,
+ * and each one looks like a bug in Orion rather than a fact about the OS.
+ */
+function describeUnrunnable(summary: ImportSummary): string {
+  if (summary.unrunnableCount === 0) return "";
+
+  const count = summary.unrunnableCount;
+  const noun = count === 1 ? "script" : "scripts";
+  const types = summary.unrunnableTypes.join(" and ");
+  const named =
+    summary.unrunnableScripts.length < count
+      ? ""
+      : ` (${summary.unrunnableScripts.join(", ")})`;
+
+  return `${count} ${types} ${noun}${named} came across unchanged but cannot run on ${platform().os === "macos" ? "macOS" : "Windows"} — they are kept so they still work on the machine they were written for.`;
+}
+
 const SPOTLIGHT_SHORTCUT_KEY = "spotlight_shortcut";
 const DEFAULT_SPOTLIGHT_SHORTCUT = "CmdOrCtrl+Shift+O";
 const DEFAULT_IDE_FALLBACK = "code";
@@ -364,6 +388,18 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
 
   const handleCheckUpdates = useCallback(async () => {
     onError(null);
+
+    // The macOS build is unsigned, so it is deliberately not served by the
+    // in-app updater: the download would be quarantined by Gatekeeper and the
+    // in-place replacement would fail. Saying so is better than letting the
+    // check fail and reporting it as a network problem.
+    if (platform().os === "macos") {
+      setUpdateStatus(
+        "On macOS, update by downloading the latest .dmg from the Releases page — in-app updates need a signed build."
+      );
+      return;
+    }
+
     setCheckingUpdates(true);
     try {
       const update = await check();
@@ -404,12 +440,18 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
     setImporting(true);
     try {
       const text = await pendingFile.text();
-      await importData(text);
+      const summary = await importData(text);
       setPendingFile(null);
       // An import replaces the whole database, which clears the vector index
       // with it. Say so here rather than letting /ai come back empty later.
       setStatusMessage(
-        "Backup imported successfully. If you use semantic search, go to the AI Search tab and rebuild the index — an import clears it."
+        [
+          "Backup imported successfully.",
+          describeUnrunnable(summary),
+          "If you use semantic search, go to the AI Search tab and rebuild the index — an import clears it.",
+        ]
+          .filter(Boolean)
+          .join(" ")
       );
       onDataReplaced();
     } catch (e) {
@@ -501,7 +543,11 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                     id="python-path"
                     label="Python Executable Path"
                     initial={pythonPath}
-                    placeholder="C:\venvs\main\Scripts\python.exe"
+                    placeholder={
+                      platform().os === "macos"
+                        ? "/opt/homebrew/bin/python3"
+                        : "C:\\venvs\\main\\Scripts\\python.exe"
+                    }
                     persist={persistPythonPath}
                     onPersistError={(m) => onError(m)}
                     disabled={!settingsLoaded}
@@ -510,7 +556,11 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                     id="node-path"
                     label="Node.js Executable Path"
                     initial={nodePath}
-                    placeholder="D:\tools\node\node.exe"
+                    placeholder={
+                      platform().os === "macos"
+                        ? "/opt/homebrew/bin/node"
+                        : "D:\\tools\\node\\node.exe"
+                    }
                     persist={persistNodePath}
                     onPersistError={(m) => onError(m)}
                     disabled={!settingsLoaded}
@@ -554,9 +604,9 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                   Global Search Shortcut
                 </p>
                 <p className="mt-0.5 mb-2.5 text-xs leading-relaxed text-ink-faint">
-                  Summons the search window from anywhere in Windows. If another
-                  app already owns the combination, Orion keeps the previous one
-                  and tells you.
+                  Summons the search window from anywhere. If another app
+                  already owns the combination, Orion keeps the previous one and
+                  tells you.
                 </p>
                 <ShortcutInput
                   value={spotlightShortcut}
@@ -566,7 +616,11 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
               </div>
 
               <p className="px-1 pt-1 text-[10px] text-ink-faint">
-                Autostart is applied immediately via the Windows registry.
+                Autostart is applied immediately, via{" "}
+                {platform().os === "macos"
+                  ? "a macOS login item"
+                  : "the Windows registry"}
+                .
               </p>
 
               <div className="rounded-lg border border-rule bg-surface/70 p-4">

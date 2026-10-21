@@ -35,6 +35,7 @@ import ScriptsSection from "./ScriptsSection";
 import TasksSection from "./TasksSection";
 import TimerWidget from "./TimerWidget";
 import { useDragReorder } from "../utils/reorder";
+import { platform } from "../utils/platform";
 import { displayTarget } from "../utils/paths";
 import ResourceSuggestions from "./ResourceSuggestions";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -42,10 +43,34 @@ import { Code, Terminal } from "lucide-react";
 
 const BROWSER_LABELS: Record<PreferredApp, string> = {
   default: "System default",
+  safari: "Safari",
   chrome: "Chrome",
   edge: "Edge",
   firefox: "Firefox",
 };
+
+/**
+ * The browsers this machine has a launcher for.
+ *
+ * A resource imported from the other platform may name one that is not here.
+ * It keeps its stored preference — so it still opens in Safari when the setup
+ * goes back to the Mac — and the launcher opens it in the system default
+ * meanwhile. The picker only offers what works, so choosing deliberately and
+ * inheriting a choice are kept distinct.
+ */
+function availableBrowsers(): PreferredApp[] {
+  return platform().browsers as PreferredApp[];
+}
+
+function browserOptions(current: PreferredApp): PreferredApp[] {
+  const available = availableBrowsers();
+  return available.includes(current) ? available : [current, ...available];
+}
+
+/** Safari has no profile switch; the others take one. */
+function supportsProfile(app: PreferredApp): boolean {
+  return app !== "default" && app !== "safari";
+}
 
 /** Accumulated time as HH:MM:SS, with hours growing past two digits. */
 function formatTotalTime(totalSeconds: number): string {
@@ -218,7 +243,7 @@ export default function ResourcesPanel({
         targetPath,
         preferredApp: type === "link" ? preferredApp : "default",
         profileName:
-          type === "link" && preferredApp !== "default" && profileName.trim()
+          type === "link" && supportsProfile(preferredApp) && profileName.trim()
             ? profileName
             : null,
       });
@@ -260,7 +285,7 @@ export default function ResourcesPanel({
   /// Copies a resource's target. The displayed form is copied rather than the
   /// stored one, so a local file yields the path the user typed instead of the
   /// file:// URL it is stored as — the path is what pastes usefully into
-  /// Explorer, a terminal or a chat.
+  /// the file manager, a terminal or a chat.
   async function handleCopy(res: Resource) {
     onError(null);
     try {
@@ -391,8 +416,11 @@ export default function ResourcesPanel({
               />
               {type === "link" && (
                 <p className="col-span-2 -mt-1 text-[10px] text-ink-faint">
-                  A web URL, or an absolute path to a local file — Explorer's
-                  “Copy as path” works as-is.
+                  A web URL, or an absolute path to a local file —{" "}
+                  {platform().os === "macos"
+                    ? "Finder’s “Copy as Pathname” (⌥⌘C)"
+                    : "Explorer’s “Copy as path”"}{" "}
+                  works as-is.
                 </p>
               )}
 
@@ -415,9 +443,12 @@ export default function ResourcesPanel({
                     onChange={(e) => setPreferredApp(e.target.value as PreferredApp)}
                     className="w-full rounded bg-raised px-2.5 py-1.5 text-[13px] text-ink outline-none ring-1 ring-transparent focus:ring-focus/50"
                   >
-                    {(Object.keys(BROWSER_LABELS) as PreferredApp[]).map((app) => (
+                    {browserOptions(preferredApp).map((app) => (
                       <option key={app} value={app}>
                         {BROWSER_LABELS[app]}
+                        {app === "default" || availableBrowsers().includes(app)
+                          ? ""
+                          : " — not on this platform"}
                       </option>
                     ))}
                   </select>
@@ -426,16 +457,16 @@ export default function ResourcesPanel({
                     onChange={(e) => setProfileName(e.target.value)}
                     onKeyDown={onKeyDown}
                     maxLength={120}
-                    disabled={preferredApp === "default"}
+                    disabled={!supportsProfile(preferredApp)}
                     placeholder={
                       preferredApp === "firefox"
                         ? "Profile name (optional)"
                         : "Profile dir e.g. Profile 1"
                     }
                     className={`w-full rounded bg-raised px-2.5 py-1.5 text-[13px] placeholder-ink-faint outline-none ring-1 ring-transparent focus:ring-focus/50 ${
-                      preferredApp === "default"
-                        ? "cursor-not-allowed opacity-40"
-                        : "text-ink-strong"
+                      supportsProfile(preferredApp)
+                        ? "text-ink-strong"
+                        : "cursor-not-allowed opacity-40"
                     }`}
                   />
                 </>
@@ -538,7 +569,7 @@ export default function ResourcesPanel({
                     <button
                       onClick={() => void handleLaunch(res.id, "terminal")}
                       disabled={launchingId === res.id}
-                      title="Open in Windows Terminal"
+                      title={`Open in ${platform().terminalLabel}`}
                       className="flex size-7 shrink-0 items-center justify-center rounded border border-rule-strong text-ink-muted transition-colors enabled:hover:border-positive/60 enabled:hover:text-positive-ink disabled:opacity-50 cursor-default"
                     >
                       <Terminal size={13} />

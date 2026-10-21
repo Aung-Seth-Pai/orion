@@ -13,6 +13,7 @@ import { getSettings } from "../api/settings";
 import { searchAll } from "../api/search";
 import { executeScript } from "../api/scripts";
 import { launchResource } from "../api/resources";
+import { displayAccelerator } from "../utils/platform";
 import type { SearchResult } from "../types";
 
 const TYPE_ICONS: Record<SearchResult["itemType"], typeof Globe> = {
@@ -25,9 +26,9 @@ const TYPE_ICONS: Record<SearchResult["itemType"], typeof Globe> = {
 
 const DEFAULT_SPOTLIGHT_SHORTCUT = "CmdOrCtrl+Shift+O";
 
-/** `CmdOrCtrl+Shift+O` -> `Ctrl+Shift+O` for display. */
+/** `CmdOrCtrl+Shift+O` -> `Ctrl+Shift+O`, or `⇧⌘O` on a Mac. */
 function prettifyShortcut(accelerator: string): string {
-  return accelerator.replace("CmdOrCtrl", "Ctrl");
+  return displayAccelerator(accelerator);
 }
 
 export default function Spotlight() {
