@@ -262,6 +262,32 @@
   --mark-size: 18px;
 }
 
+/* ── Motion ─────────────────────────────────────────────────────────────────
+   Deliberately NOT themeable: how long the interface takes to settle is a
+   property of the app, not of its palette, and a theme that felt slower than
+   another would read as a performance bug.
+
+   Everything is under 180ms and nothing blocks input. Orion's whole promise is
+   getting out of the way, so an animation the user can outrun is the only kind
+   worth having -- these exist to make a context switch legible, not to be
+   admired.
+
+   The reduced-motion block zeroes the durations rather than disabling the
+   animations. With animation-fill-mode: both, a 0ms animation still applies its
+   end state, so the interface lands exactly where it would have, instantly. */
+:root {
+  --settle: 160ms;
+  --settle-quick: 110ms;
+  --ease-settle: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --settle: 0ms;
+    --settle-quick: 0ms;
+  }
+}
+
 /* ── Runtime overrides ──────────────────────────────────────────────────────
    Deep field derives its accent from the active workspace's colour. That is
    computed in TypeScript and written to --accent / --accent-ink / --accent-soft

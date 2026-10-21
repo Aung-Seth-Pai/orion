@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import Sidebar from "./components/Sidebar";
 import ResourcesPanel from "./components/ResourcesPanel";
 import SettingsView from "./components/SettingsView";
+import PomodoroHairline from "./components/PomodoroHairline";
 import Spotlight from "./components/Spotlight";
 import TimerAlert from "./components/TimerAlert";
 import { notifyPomodoroComplete } from "./utils/notify";
@@ -365,6 +366,19 @@ function MainShell() {
 
   const active = workspaces.find((w) => w.id === activeId) ?? null;
 
+  // Only the active workspace's pomodoro, and only while it is running. Timers
+  // are per-workspace and more than one can be going, but a bar on the window
+  // edge has no way to say WHICH context it belongs to -- so it tracks the one
+  // the user is looking at, or it says nothing.
+  const activeTimer = activeId ? timers[activeId] : undefined;
+  const pomodoroFraction =
+    activeTimer &&
+    activeTimer.mode === "pomodoro" &&
+    activeTimer.phase === "running" &&
+    pomodoroSeconds > 0
+      ? activeTimer.elapsed / pomodoroSeconds
+      : null;
+
   return (
     <div className="flex h-full">
       <Sidebar
@@ -379,9 +393,11 @@ function MainShell() {
         onReorder={handleReorder}
       />
 
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="relative flex min-w-0 flex-1 flex-col">
+        <PomodoroHairline fraction={pomodoroFraction} />
+
         {error && (
-          <div className="border-b border-red-900/50 bg-red-950/40 px-4 py-2 text-xs text-red-300">
+          <div className="border-b border-danger/40 bg-danger/10 px-4 py-2 text-xs text-danger-ink">
             {error}
           </div>
         )}
@@ -392,12 +408,20 @@ function MainShell() {
           ) : settingsOpen ? (
             <SettingsView onError={setError} onDataReplaced={handleDataReplaced} />
           ) : active ? (
-            <ResourcesPanel
-              workspace={active}
-              onError={setError}
-              timer={timer}
-              onJumpToWorkspace={handleSelect}
-            />
+            // Keyed on the workspace so the settle replays on every switch --
+            // and so the panel genuinely starts fresh, rather than carrying the
+            // previous context's half-open composer across the threshold.
+            <div
+              key={active.id}
+              className="orion-settle flex min-h-0 flex-1 flex-col"
+            >
+              <ResourcesPanel
+                workspace={active}
+                onError={setError}
+                timer={timer}
+                onJumpToWorkspace={handleSelect}
+              />
+            </div>
           ) : (
             <div className="flex flex-1 items-center justify-center">
               <div className="flex flex-col items-center gap-3 text-center">

@@ -53,6 +53,40 @@ body {
   @apply bg-void text-ink antialiased select-none;
 }
 
+/* Crossing into a context. Short, and interruptible by definition: switching
+   again simply restarts it, because the element is keyed on the workspace. */
+@keyframes orion-settle {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Summoning Quick Launch. Scale rather than slide: the window appears centred
+   over whatever the user was doing, and sliding would imply a direction. */
+@keyframes orion-summon {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.orion-settle {
+  animation: orion-settle var(--settle) var(--ease-settle) both;
+}
+
+.orion-summon {
+  animation: orion-summon var(--settle-quick) var(--ease-settle) both;
+}
+
 ::selection {
   background-color: var(--selection);
 }

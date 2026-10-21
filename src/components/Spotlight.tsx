@@ -38,10 +38,28 @@ export default function Spotlight() {
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const [summons, setSummons] = useState(0);
 
+  // The spotlight window is hidden and re-shown rather than created and
+  // destroyed, so this component mounts once and a mount animation would play
+  // exactly one time -- on the first summon of the session, and never again.
+  // Bumping a key on focus replays it each time the window comes forward.
+  useEffect(() => {
+    function onFocus() {
+      setSummons((n) => n + 1);
+    }
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
+
+  // Focusing has to happen HERE rather than in the listener above. The key
+  // bump remounts the panel, so an input focused inside the event handler is
+  // the one React is about to throw away -- the summon would animate nicely
+  // and then leave the user typing into nothing. Running it as an effect on
+  // `summons` puts it after the remount, on the element that survives.
   useEffect(() => {
     inputRef.current?.focus();
-  }, []);
+  }, [summons]);
 
   useEffect(() => {
     const q = query.trim();
@@ -138,7 +156,10 @@ export default function Spotlight() {
   }
 
   return (
-    <div className="flex h-full flex-col rounded-xl border border-rule-strong/70 bg-surface/90 shadow-2xl shadow-black/60 backdrop-blur-xl">
+    <div
+      key={summons}
+      className="orion-summon flex h-full flex-col rounded-xl border border-rule-strong/70 bg-surface/90 shadow-2xl shadow-black/60 backdrop-blur-xl"
+    >
       <div className="flex items-center gap-3 border-b border-rule px-4">
         <Search size={18} className="shrink-0 text-ink-faint" />
         <input
