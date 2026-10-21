@@ -66,7 +66,12 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 toggle_main(tray.app_handle());
             }
         })
-        .build(app)?;
+        .build(app)
+        .map(|tray| {
+            // macOS needs the icon marked as a template so the system tints it
+            // for the current menu bar appearance; Windows needs nothing.
+            crate::platform::finish_tray(&tray);
+        })?;
 
     Ok(())
 }

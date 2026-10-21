@@ -5,9 +5,11 @@ mod alert;
 mod commands;
 mod db;
 mod models;
+/// Every OS-specific behaviour in the app. See `platform/mod.rs` for the rule
+/// the rest of the crate follows: no other module carries a `cfg(target_os)`.
+pub mod platform;
 mod tray;
 
-use std::path::PathBuf;
 
 use commands::{
     create_resource, create_script, create_task, create_workspace, delete_env_var, delete_resource,
@@ -43,10 +45,7 @@ fn migrate_legacy_database(app: &AppHandle) {
         return;
     }
 
-    let Some(legacy_dir) = std::env::var("APPDATA")
-        .ok()
-        .map(|appdata| PathBuf::from(appdata).join("com.orion.cockpit"))
-    else {
+    let Some(legacy_dir) = platform::legacy_data_dir() else {
         return;
     };
 

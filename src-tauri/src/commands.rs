@@ -9,10 +9,10 @@ use rusqlite::{params, params_from_iter};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_notification::NotificationExt;
-use tokio::process::Command;
 use tokio::task::spawn_blocking;
 
 use crate::db::Db;
+use crate::platform;
 use crate::models::{
     AiStatus, AutomationScript, BackupPayload, EnvVar, NewResource, NewScript, NewTask,
     NewTimerLog, NewWorkspace, Resource, ResourcePatch, ResourceSuggestion, ScriptPatch,
@@ -41,14 +41,11 @@ const RESOURCE_COLUMNS: &str =
     "id, workspace_id, type, title, target_path, preferred_app, profile_name, sort_order, created_at";
 
 const VALID_RESOURCE_TYPES: &[&str] = &["link", "folder"];
-const VALID_PREFERRED_APPS: &[&str] = &["default", "chrome", "edge", "firefox"];
 
 const SCRIPT_COLUMNS: &str =
     "id, workspace_id, title, script_type, script_content, sort_order, created_at";
-const VALID_SCRIPT_TYPES: &[&str] = &["powershell", "cmd", "python", "node", "wsl_bash"];
 const VALID_SESSION_TYPES: &[&str] = &["stopwatch", "pomodoro"];
 
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const MAX_SCRIPT_BYTES: usize = 131_072;
 const MAX_OUTPUT_CHARS: usize = 65_536;
 const SCRIPT_TIMEOUT_SECS: u64 = 120;
@@ -1008,76 +1005,39 @@ fn row_to_resource(row: &rusqlite::Row) -> rusqlite::Result<Resource> {
     })
 }
 
-/// True for an absolute native path: a drive-letter path (`C:\...` or `C:/...`)
-/// or a UNC share (`\server\share`). Relative paths are deliberately excluded —
-/// they have no meaning without a working directory, and accepting them would
-/// turn a typo into a silently broken resource.
-fn is_absolute_local_path(target: &str) -> bool {
-    let bytes = target.as_bytes();
-    let drive_letter = bytes.len() >= 3
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1] == b':'
-        && (bytes[2] == b'\\' || bytes[2] == b'/');
-    let unc = target.starts_with(r"\\") || target.starts_with("//");
-    drive_letter || unc
-}
-
-/// Percent-encodes the characters that would otherwise change how a URL parses.
-///
-/// `/` and `:` are left alone because they are structural here (the separator
-/// and the drive colon). Everything outside the unreserved set is escaped,
-/// which covers the two that actually bite in practice: a space, and a `#` in a
-/// filename silently truncating the path into a fragment.
-fn percent_encode_path(path: &str) -> String {
-    const KEEP: &[u8] = b"-._~/:";
-    let mut out = String::with_capacity(path.len());
-    for byte in path.as_bytes() {
-        if byte.is_ascii_alphanumeric() || KEEP.contains(byte) {
-            out.push(*byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
-}
-
 /// Turns an absolute local path into the `file://` URL the launcher expects,
 /// leaving anything that is already a URL untouched.
 ///
-/// This exists so a link can be given as `C:\Users\me\Downloads\cv.pdf` — the
-/// form Explorer's "Copy as path" produces — instead of demanding the user
-/// hand-write `file:///C:/Users/me/Downloads/cv.pdf`. Normalising on the way in
-/// rather than at launch time means the stored value is always a valid URL, so
+/// This exists so a link can be given as the form the platform's file manager
+/// puts on the clipboard — `C:\Users\me\Downloads\cv.pdf` from Explorer's "Copy
+/// as path", or `/Users/me/Downloads/cv.pdf` from Finder — instead of demanding
+/// the user hand-write `file:///…`. Normalising on the way in rather than at
+/// launch time means the stored value is always a valid URL, so
 /// `launch_resource` and its scheme check are unchanged, and a local file is not
 /// a new resource *type* needing a CHECK-constraint migration.
+///
+/// What counts as an absolute path, and how it becomes a URL, both differ by
+/// platform and live in [`platform`]. A Windows path given to the macOS build is
+/// therefore *not* recognised, which is deliberate: storing it would produce a
+/// resource that fails later with an obscure launcher error instead of being
+/// refused up front.
 fn normalize_target_path(resource_type: &str, target: &str) -> Result<String, String> {
     let trimmed = target.trim();
 
     // Folders are stored and launched as native paths, not URLs.
-    if resource_type != "link" || !is_absolute_local_path(trimmed) {
+    if resource_type != "link" || !platform::is_absolute_native_path(trimmed) {
         return Ok(trimmed.to_string());
     }
 
     // A directory given as a Link would open a file:// listing in the browser
-    // rather than Explorer, which is never what was meant.
+    // rather than the file manager, which is never what was meant.
     if std::path::Path::new(trimmed).is_dir() {
         return Err(
             "That path is a folder. Add it as a Folder resource instead of a Link.".to_string(),
         );
     }
 
-    // Backslashes are not legal in a URL path; the drive colon and the
-    // separators both survive percent_encode_path untouched.
-    let forward = trimmed.replace('\\', "/");
-    let encoded = percent_encode_path(&forward);
-
-    // A UNC path already starts with two slashes, giving file://<host>/<share>.
-    // A drive path needs the empty authority, giving file:///C:/...
-    if encoded.starts_with("//") {
-        Ok(format!("file:{encoded}"))
-    } else {
-        Ok(format!("file:///{encoded}"))
-    }
+    Ok(platform::file_url_from_native_path(trimmed))
 }
 
 fn validate_resource_fields(
@@ -1091,9 +1051,15 @@ fn validate_resource_fields(
             "Invalid resource type '{resource_type}' (expected 'link' or 'folder')"
         ));
     }
-    if !VALID_PREFERRED_APPS.contains(&preferred_app) {
+    // Validated against every app Orion can store rather than only the ones
+    // available here, so that editing an imported resource's title does not
+    // fail because it happens to prefer Safari on a Windows machine. The picker
+    // offers only what this platform has, and the launcher falls back to the
+    // default browser for anything else.
+    if !platform::ALL_PREFERRED_APPS.contains(&preferred_app) {
         return Err(format!(
-            "Invalid preferred app '{preferred_app}' (expected default, chrome, edge or firefox)"
+            "Invalid preferred app '{preferred_app}' (expected one of: {})",
+            platform::ALL_PREFERRED_APPS.join(", ")
         ));
     }
     let title = title.trim();
@@ -1374,53 +1340,9 @@ struct LaunchTarget {
     default_ide: Option<String>,
 }
 
-fn resolve_browser_exe(candidates: &[PathBuf], display_name: &str) -> Result<PathBuf, String> {
-    for candidate in candidates {
-        if candidate.is_file() {
-            return Ok(candidate.clone());
-        }
-    }
-    Err(format!(
-        "{display_name} was not found on this system. Install it or use the system default browser."
-    ))
-}
-
-fn chrome_exe() -> Result<PathBuf, String> {
-    let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
-    resolve_browser_exe(
-        &[
-            PathBuf::from("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"),
-            PathBuf::from("C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"),
-            PathBuf::from(local).join("Google\\Chrome\\Application\\chrome.exe"),
-        ],
-        "Chrome",
-    )
-}
-
-fn edge_exe() -> Result<PathBuf, String> {
-    resolve_browser_exe(
-        &[
-            PathBuf::from("C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"),
-            PathBuf::from("C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"),
-        ],
-        "Microsoft Edge",
-    )
-}
-
-fn firefox_exe() -> Result<PathBuf, String> {
-    resolve_browser_exe(
-        &[
-            PathBuf::from("C:\\Program Files\\Mozilla Firefox\\firefox.exe"),
-            PathBuf::from("C:\\Program Files (x86)\\Mozilla Firefox\\firefox.exe"),
-        ],
-        "Firefox",
-    )
-}
-
-/// Spawns the user-configured IDE command against a path. A direct spawn is
-/// attempted first (covers absolute .exe paths and PATH executables); if the
-/// OS cannot run it directly we fall back to `cmd /C`, which resolves
-/// PATHEXT shims like VS Code's `code.cmd`.
+/// Validates the user-configured IDE command, then hands it to the platform to
+/// spawn. The checks are shared because they are about what the user typed, not
+/// about how it gets run.
 fn spawn_ide(command_str: &str, target_path: &str) -> Result<(), String> {
     let trimmed = command_str.trim();
     if trimmed.is_empty() {
@@ -1429,20 +1351,7 @@ fn spawn_ide(command_str: &str, target_path: &str) -> Result<(), String> {
     if trimmed.contains('"') || trimmed.contains('\0') || trimmed.contains('\n') {
         return Err("Default IDE command contains invalid characters".into());
     }
-
-    match Command::new(trimmed).arg(target_path).spawn() {
-        Ok(_) => Ok(()),
-        Err(direct_err) => Command::new("cmd")
-            .args(["/C", trimmed, target_path])
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-            .map(|_| ())
-            .map_err(|fallback_err| {
-                format!(
-                    "failed to launch IDE '{trimmed}' (direct: {direct_err}; via cmd: {fallback_err})"
-                )
-            }),
-    }
+    platform::spawn_ide(trimmed, target_path)
 }
 
 #[tauri::command]
@@ -1510,25 +1419,25 @@ pub async fn launch_resource(
                     Ok(format!("Opened in {ide_command}"))
                 }
                 Some("terminal") => {
-                    if let Err(e) = Command::new("wt").args(["-d", &target.target_path]).spawn() {
-                        let msg = format!(
-                            "failed to open terminal here (is Windows Terminal installed?): {e}"
-                        );
-                        log::error!("Terminal launch failed for '{log_id}': {msg}");
-                        return Err(msg);
+                    if let Err(e) = platform::open_terminal_at(&target.target_path) {
+                        log::error!("Terminal launch failed for '{log_id}': {e}");
+                        return Err(e);
                     }
-                    log::info!("Resource '{log_id}' opened in Windows Terminal");
+                    log::info!(
+                        "Resource '{log_id}' opened in {}",
+                        platform::TERMINAL_LABEL
+                    );
                     Ok("Opened in terminal".to_string())
                 }
                 _ => {
-                    if let Err(e) = Command::new("explorer.exe")
-                        .arg(&target.target_path)
-                        .spawn()
-                    {
-                        log::error!("Explorer launch failed for '{log_id}': {e}");
-                        return Err(format!("failed to launch explorer: {e}"));
+                    if let Err(e) = platform::reveal_path(&path) {
+                        log::error!("File manager launch failed for '{log_id}': {e}");
+                        return Err(e);
                     }
-                    log::info!("Resource '{log_id}' opened in Explorer");
+                    log::info!(
+                        "Resource '{log_id}' opened in {}",
+                        platform::FILE_MANAGER_LABEL
+                    );
                     Ok("Opened folder".to_string())
                 }
             }
@@ -1547,48 +1456,33 @@ pub async fn launch_resource(
                 return Err("Refusing to launch: URL contains invalid characters".into());
             }
 
-            match target.preferred_app.as_str() {
-                "default" => {
-                    Command::new("cmd")
-                        .args(["/C", "start", "", url])
-                        .creation_flags(0x08000000)
-                        .spawn()
-                        .map_err(|e| format!("failed to open URL in default browser: {e}"))?;
-                }
-                "chrome" => {
-                    let exe = chrome_exe()?;
-                    let mut cmd = Command::new(exe);
-                    if let Some(profile) = target.profile_name.as_deref() {
-                        cmd.arg(format!("--profile-directory={profile}"));
-                    }
-                    cmd.arg(url)
-                        .spawn()
-                        .map_err(|e| format!("failed to launch Chrome: {e}"))?;
-                }
-                "edge" => {
-                    let exe = edge_exe()?;
-                    let mut cmd = Command::new(exe);
-                    if let Some(profile) = target.profile_name.as_deref() {
-                        cmd.arg(format!("--profile-directory={profile}"));
-                    }
-                    cmd.arg(url)
-                        .spawn()
-                        .map_err(|e| format!("failed to launch Edge: {e}"))?;
-                }
-                "firefox" => {
-                    let exe = firefox_exe()?;
-                    let mut cmd = Command::new(exe);
-                    if let Some(profile) = target.profile_name.as_deref() {
-                        cmd.args(["-P", profile]);
-                    }
-                    cmd.arg(url)
-                        .spawn()
-                        .map_err(|e| format!("failed to launch Firefox: {e}"))?;
-                }
-                other => {
-                    log::error!("Launch failed for '{log_id}': unknown preferred app '{other}'");
-                    return Err(format!("Unknown preferred app '{other}'"));
-                }
+            let app = target.preferred_app.as_str();
+
+            // A resource set written on another platform can name a browser
+            // this one has no launcher for — Safari on Windows, say. Falling
+            // back to the system default opens the link rather than refusing
+            // it, which is what the user wanted; the stored preference is left
+            // alone so it still works when they go back.
+            let app = if app != "default" && !platform::PREFERRED_APPS.contains(&app) {
+                log::info!(
+                    "Resource '{log_id}' prefers '{app}', which is not available on {}; \
+                     using the default browser",
+                    platform::OS
+                );
+                "default"
+            } else {
+                app
+            };
+
+            let launched = if app == "default" {
+                platform::open_url_default(url)
+            } else {
+                platform::open_url_in(app, url, target.profile_name.as_deref())
+            };
+
+            if let Err(e) = launched {
+                log::error!("Launch failed for '{log_id}': {e}");
+                return Err(e);
             }
             log::info!("Resource '{log_id}' launched in {}", target.preferred_app);
             Ok("Launched".to_string())
@@ -1617,9 +1511,14 @@ fn validate_script_fields(
     title: &str,
     script_content: &str,
 ) -> Result<(), String> {
-    if !VALID_SCRIPT_TYPES.contains(&script_type) {
+    // Creating is choosing, so a new script must be one this machine can
+    // actually run. (Editing is preserving — see `update_script`, which accepts
+    // any storable type so an imported Windows script can still be maintained
+    // from a Mac and vice versa.)
+    if !platform::can_run_script(script_type) {
         return Err(format!(
-            "Invalid script type '{script_type}' (expected one of: powershell, cmd, python, node, wsl_bash)"
+            "Invalid script type '{script_type}' (expected one of: {})",
+            platform::RUNNABLE_SCRIPT_TYPES.join(", ")
         ));
     }
     let title = title.trim();
@@ -1758,7 +1657,11 @@ pub async fn update_script(
 ) -> Result<AutomationScript, String> {
     if let Some(script_type) = &patch.script_type {
         let t = script_type.trim().to_lowercase();
-        if !VALID_SCRIPT_TYPES.contains(&t.as_str()) {
+        // Any type Orion can STORE, not only one it can run here: an imported
+        // PowerShell script should stay editable from a Mac — fixing a typo in
+        // it for the Windows machine is a reasonable thing to want — and the
+        // run path is where it is stopped, with an explanation.
+        if !platform::ALL_SCRIPT_TYPES.contains(&t.as_str()) {
             return Err(format!("Invalid script type '{t}'"));
         }
     }
@@ -1864,61 +1767,6 @@ struct FetchedScript {
     node_path: Option<String>,
 }
 
-fn windows_to_wsl_path(path: &std::path::Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
-    let bytes = text.as_bytes();
-    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
-        let drive = (bytes[0] as char).to_ascii_lowercase();
-        format!("/mnt/{drive}{}", &text[2..])
-    } else {
-        text
-    }
-}
-
-fn build_interpreter_command(
-    script_type: &str,
-    temp_path: &PathBuf,
-    custom_python: Option<&str>,
-    custom_node: Option<&str>,
-) -> Command {
-    let mut command = match script_type {
-        "powershell" => {
-            let mut c = Command::new("powershell.exe");
-            c.args(["-ExecutionPolicy", "Bypass", "-File"])
-                .arg(temp_path);
-            c
-        }
-        "cmd" => {
-            let mut c = Command::new("cmd.exe");
-            c.arg("/C").arg(temp_path);
-            c
-        }
-        "python" => {
-            let python_exe = custom_python.unwrap_or("python.exe");
-            log::info!("Using Python interpreter: {python_exe}");
-            let mut c = Command::new(python_exe);
-            c.arg(temp_path);
-            c
-        }
-        "node" => {
-            let node_exe = custom_node.unwrap_or("node.exe");
-            log::info!("Using Node.js interpreter: {node_exe}");
-            let mut c = Command::new(node_exe);
-            c.arg(temp_path);
-            c
-        }
-        "wsl_bash" => {
-            let wsl_path = windows_to_wsl_path(temp_path);
-            let mut c = Command::new("wsl.exe");
-            c.args(["--exec", "bash", &wsl_path]);
-            c
-        }
-        other => unreachable!("script type '{other}' should have been validated"),
-    };
-    command.creation_flags(CREATE_NO_WINDOW);
-    command
-}
-
 async fn run_temp_script(fetched: FetchedScript, temp_path: PathBuf) -> Result<String, String> {
     let write_result = tokio::fs::write(&temp_path, fetched.script_content.as_bytes()).await;
     if let Err(e) = write_result {
@@ -1926,25 +1774,13 @@ async fn run_temp_script(fetched: FetchedScript, temp_path: PathBuf) -> Result<S
         return Err(format!("failed to write temporary script file: {e}"));
     }
 
-    // wsl.exe does not forward custom environment variables into the Linux
-    // guest unless they are listed in WSLENV. The /u flag marks each variable
-    // as "pass from Windows into WSL only".
-    let wslenv = if fetched.script_type == "wsl_bash" && !fetched.env_vars.is_empty() {
-        let ours = fetched
-            .env_vars
-            .keys()
-            .map(|key| format!("{key}/u"))
-            .collect::<Vec<_>>()
-            .join(":");
-        match std::env::var("WSLENV") {
-            Ok(existing) if !existing.trim().is_empty() => format!("{ours}:{existing}"),
-            _ => ours,
-        }
-    } else {
-        String::new()
-    };
+    // Some interpreters need a bridge before the injected variables are
+    // visible to the script — WSL, for one, drops anything not named in
+    // WSLENV. What that takes is the platform's business.
+    let names: Vec<&str> = fetched.env_vars.keys().map(String::as_str).collect();
+    let bridge = platform::extra_script_env(&fetched.script_type, &names);
 
-    let mut command = build_interpreter_command(
+    let mut command = platform::interpreter(
         &fetched.script_type,
         &temp_path,
         fetched.python_path.as_deref(),
@@ -1957,9 +1793,8 @@ async fn run_temp_script(fetched: FetchedScript, temp_path: PathBuf) -> Result<S
         .stderr(Stdio::piped())
         .kill_on_drop(true);
 
-    // Never touch a pre-existing WSLENV unless we actually have vars to pass.
-    if !wslenv.is_empty() {
-        command.env("WSLENV", wslenv);
+    for (key, value) in bridge {
+        command.env(key, value);
     }
 
     let child = command.spawn().map_err(|e| {
@@ -2085,22 +1920,20 @@ pub async fn execute_script(db: State<'_, Db>, id: String) -> Result<String, Str
     .await
     .map_err(|e| format!("background task failed: {e}"))??;
 
-    if !VALID_SCRIPT_TYPES.contains(&fetched.script_type.as_str()) {
-        log::error!(
-            "Script execution rejected: unknown type '{}'",
+    // Not "is this a type we recognise" but "is this a type we can run *here*".
+    // A PowerShell script imported onto a Mac is kept and shown; it just stops
+    // at this line, with a message that says where it does work.
+    if let Some(reason) = platform::unrunnable_reason(&fetched.script_type) {
+        log::info!(
+            "Script execution declined on {}: type '{}'",
+            platform::OS,
             fetched.script_type
         );
-        return Err(format!("Unknown script type '{}'", fetched.script_type));
+        return Err(reason);
     }
 
     let started = std::time::Instant::now();
-    let extension = match fetched.script_type.as_str() {
-        "powershell" => "ps1",
-        "cmd" => "bat",
-        "python" => "py",
-        "node" => "js",
-        _ => "sh",
-    };
+    let extension = platform::script_extension(&fetched.script_type);
 
     let temp_path =
         std::env::temp_dir().join(format!("orion-cmd-{}.{}", uuid::Uuid::new_v4(), extension));
@@ -2802,11 +2635,7 @@ pub async fn open_log_folder(app: AppHandle) -> Result<(), String> {
 
     std::fs::create_dir_all(&dir).map_err(|e| format!("failed to create log directory: {e}"))?;
 
-    Command::new("explorer.exe")
-        .arg(&dir)
-        .spawn()
-        .map_err(|e| format!("failed to open log folder: {e}"))?;
-    Ok(())
+    platform::reveal_path(&dir)
 }
 
 #[tauri::command]
@@ -3949,23 +3778,20 @@ mod tests {
 
     // --- Local file links -----------------------------------------------------
 
-    #[test]
-    fn recognises_absolute_local_paths() {
-        assert!(is_absolute_local_path(r"C:\Users\me\cv.pdf"));
-        assert!(is_absolute_local_path("C:/Users/me/cv.pdf"));
-        assert!(is_absolute_local_path(r"\\server\share\doc.txt"));
-        // Relative paths have no meaning without a working directory.
-        assert!(!is_absolute_local_path(r"Downloads\cv.pdf"));
-        assert!(!is_absolute_local_path("cv.pdf"));
-        assert!(!is_absolute_local_path("https://example.com"));
-        assert!(!is_absolute_local_path("C:"));
-    }
+    // What counts as an absolute path, and how it becomes a file:// URL, are
+    // the platform's business and are tested in `platform::{windows,macos}`.
+    // What follows is what `normalize_target_path` itself is responsible for:
+    // trimming, leaving anything that is already a URL alone, and keeping
+    // folders as native paths. The two platform-gated tests check the wiring —
+    // that a path the host recognises comes out the far end as a URL the
+    // launcher will accept — rather than re-testing the encoding.
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn a_bare_windows_path_becomes_a_file_url() {
         assert_eq!(
-            normalize_target_path("link", r"C:\Users\zepha\Downloads\Resume.pdf").unwrap(),
-            "file:///C:/Users/zepha/Downloads/Resume.pdf"
+            normalize_target_path("link", r"C:\Users\me\Downloads\Resume.pdf").unwrap(),
+            "file:///C:/Users/me/Downloads/Resume.pdf"
         );
         // Surrounding whitespace is a copy-paste artefact, not part of the path.
         assert_eq!(
@@ -3974,22 +3800,32 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
-    fn characters_that_would_break_the_url_are_encoded() {
-        // A space must not split the URL, and a '#' must not become a fragment
-        // that silently truncates the filename.
+    fn a_bare_posix_path_becomes_a_file_url() {
         assert_eq!(
-            normalize_target_path("link", r"C:\My Docs\draft #2.pdf").unwrap(),
-            "file:///C:/My%20Docs/draft%20%232.pdf"
+            normalize_target_path("link", "/Users/me/Downloads/Resume.pdf").unwrap(),
+            "file:///Users/me/Downloads/Resume.pdf"
+        );
+        assert_eq!(
+            normalize_target_path("link", "  /tmp/notes.txt  ").unwrap(),
+            "file:///tmp/notes.txt"
         );
     }
 
     #[test]
-    fn unc_paths_keep_their_host() {
-        assert_eq!(
-            normalize_target_path("link", r"\\nas\share\spec.pdf").unwrap(),
-            "file://nas/share/spec.pdf"
-        );
+    fn a_path_the_host_does_not_recognise_is_left_alone_for_the_validator() {
+        // A Windows path on a Mac, or a POSIX path on Windows, is not turned
+        // into a file:// URL pointing at nothing. It passes through unchanged
+        // and `validate_resource_fields` refuses it, so the user is told when
+        // they save rather than at some later launch.
+        let foreign = if cfg!(target_os = "windows") {
+            "/Users/me/cv.pdf"
+        } else {
+            r"C:\Users\me\cv.pdf"
+        };
+        assert_eq!(normalize_target_path("link", foreign).unwrap(), foreign);
+        assert!(validate_resource_fields("link", "CV", foreign, "default").is_err());
     }
 
     #[test]
@@ -4003,7 +3839,7 @@ mod tests {
             "file:///C:/already/a/url.pdf"
         );
         // A folder resource keeps its native path — the launcher hands it to
-        // Explorer, not to a browser.
+        // the file manager, not to a browser.
         assert_eq!(
             normalize_target_path("folder", r"C:\src\payments").unwrap(),
             r"C:\src\payments"
@@ -4014,8 +3850,12 @@ mod tests {
     fn normalised_paths_survive_the_scheme_check() {
         // The whole point: what the normaliser emits must satisfy the validator
         // that previously rejected the user's bare path outright.
-        let normalised =
-            normalize_target_path("link", r"C:\Users\zepha\Downloads\Resume.pdf").unwrap();
+        let native = if cfg!(target_os = "windows") {
+            r"C:\Users\me\Downloads\Resume.pdf"
+        } else {
+            "/Users/me/Downloads/Resume.pdf"
+        };
+        let normalised = normalize_target_path("link", native).unwrap();
         assert!(validate_resource_fields("link", "Resume", &normalised, "chrome").is_ok());
         // And a relative path still fails, rather than being silently accepted.
         assert!(validate_resource_fields("link", "Doc", "cv.pdf", "default").is_err());
