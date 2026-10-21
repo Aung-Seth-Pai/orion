@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Plus, Rocket, Settings as SettingsIcon, Trash2, X } from "lucide-react";
 import type { Workspace } from "../types";
 import { useAppVersion } from "../utils/version";
 import { useDragReorder } from "../utils/reorder";
+import { depthFromHours } from "../utils/constellation";
+import ConstellationMark from "./ConstellationMark";
 
 // User-chosen workspace colours. Deliberately NOT tokens: these are data the
 // user picked, and they must look the same whichever theme is active.
@@ -17,8 +19,18 @@ const PALETTE = [
   "#ec4899",
 ];
 
+/**
+ * Fixed rather than read from the --mark-size token: the size drives the
+ * optical stroke weights inside the figure, so it has to be a real number at
+ * render time, and pulling it out of CSS would mean a getComputedStyle on
+ * every row and a re-measure on every theme change.
+ */
+const MARK_SIZE = 20;
+
 interface SidebarProps {
   workspaces: Workspace[];
+  /** Accumulated seconds per workspace id; absent ids read as untouched. */
+  workspaceTimes: Record<string, number>;
   activeId: string | null;
   settingsActive: boolean;
   onSelect: (id: string) => void;
@@ -30,6 +42,7 @@ interface SidebarProps {
 
 export default function Sidebar({
   workspaces,
+  workspaceTimes,
   activeId,
   settingsActive,
   onSelect,
@@ -40,6 +53,14 @@ export default function Sidebar({
 }: SidebarProps) {
   const appVersion = useAppVersion();
   const { draggingId, overId, itemProps } = useDragReorder(workspaces, onReorder);
+
+  // The ceiling for every mark is the user's own busiest workspace, so it is
+  // computed once per render rather than per row -- and it is what keeps the
+  // marks meaningful whether the user has three hours logged or three thousand.
+  const maxHours = useMemo(() => {
+    const totals = workspaces.map((w) => (workspaceTimes[w.id] ?? 0) / 3600);
+    return totals.length ? Math.max(...totals) : 0;
+  }, [workspaces, workspaceTimes]);
   const [composerOpen, setComposerOpen] = useState(false);
   const [name, setName] = useState("");
   const [color, setColor] = useState<string>(PALETTE[5]);
@@ -118,11 +139,24 @@ export default function Sidebar({
                       : "text-ink-muted hover:bg-raised/50 hover:text-ink"
                   }`}
                 >
+                  {/* The workspace's own colour still carries it -- the mark
+                      is drawn in currentColor, so tinting the wrapper keeps
+                      that choice meaningful while the shape adds an identity
+                      the colour alone could not. With no colour set it
+                      inherits the row's active/hover state instead. */}
                   <span
-                    aria-hidden
-                    className={`size-2 shrink-0 rounded-full ${ws.color ? "" : "bg-ink-ghost"}`}
-                    style={ws.color ? { backgroundColor: ws.color } : undefined}
-                  />
+                    className="shrink-0"
+                    style={ws.color ? { color: ws.color } : undefined}
+                  >
+                    <ConstellationMark
+                      seed={ws.id}
+                      depth={depthFromHours(
+                        (workspaceTimes[ws.id] ?? 0) / 3600,
+                        maxHours
+                      )}
+                      size={MARK_SIZE}
+                    />
+                  </span>
                   <span className="truncate">{ws.name}</span>
                   <span
                     role="button"

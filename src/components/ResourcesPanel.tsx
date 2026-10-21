@@ -183,6 +183,9 @@ export default function ResourcesPanel({
     try {
       await resetWorkspaceTime(workspace.id);
       setTotalSeconds(0);
+      // So the sidebar's mark dims with it, rather than keeping the brightness
+      // of time that has just been cleared.
+      timer.markChanged();
     } catch (e) {
       onError(String(e));
     } finally {

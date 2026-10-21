@@ -2222,6 +2222,54 @@ pub async fn get_workspace_time(db: State<'_, Db>, workspace_id: String) -> Resu
     .map_err(|e| format!("background task failed: {e}"))?
 }
 
+/// Every workspace's total in one query, keyed by workspace id.
+///
+/// The sidebar draws a constellation per workspace whose brightness comes from
+/// that workspace's accumulated time, so calling `get_workspace_time` once per
+/// row would be an N+1 across the whole list on every load.
+///
+/// The join condition carries each workspace's OWN reset marker, which is what
+/// keeps this identical to `WORKSPACE_TIME_SQL` rather than merely similar. It
+/// is a LEFT JOIN on purpose: a workspace that has never been timed must come
+/// back as zero rather than be absent from the map, because a caller cannot
+/// tell a missing key from a missing workspace.
+const ALL_WORKSPACE_TIMES_SQL: &str = "
+    SELECT w.id, COALESCE(SUM(l.duration_seconds), 0)
+    FROM workspaces w
+    LEFT JOIN timer_logs l
+      ON l.workspace_id = w.id
+     AND CAST(strftime('%s', l.started_at) AS INTEGER) >
+         COALESCE(w.timer_reset_at, 0)
+    GROUP BY w.id";
+
+/// Total logged seconds for every workspace, each since its own reset marker.
+#[tauri::command]
+pub async fn get_all_workspace_times(db: State<'_, Db>) -> Result<HashMap<String, i64>, String> {
+    let conn = db.0.clone();
+
+    spawn_blocking(move || {
+        let guard = lock_db(&conn)?;
+        let mut stmt = guard
+            .prepare(ALL_WORKSPACE_TIMES_SQL)
+            .map_err(|e| format!("failed to prepare query: {e}"))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|e| format!("failed to total workspace times: {e}"))?;
+
+        let mut totals = HashMap::new();
+        for row in rows {
+            let (id, seconds) = row.map_err(|e| format!("failed to read total row: {e}"))?;
+            totals.insert(id, seconds);
+        }
+        Ok(totals)
+    })
+    .await
+    .map_err(|e| format!("background task failed: {e}"))?
+}
+
 /// Zeroes a workspace's accumulated time by moving its reset marker to now.
 /// The underlying `timer_logs` rows are kept, so history and backups stay intact.
 #[tauri::command]
@@ -4063,6 +4111,63 @@ mod tests {
         assert_eq!(workspace_time(&conn, "w1"), 900);
         assert_eq!(workspace_time(&conn, "w2"), 999);
         assert_eq!(workspace_time(&conn, "missing"), 0);
+    }
+
+    fn all_workspace_times(conn: &rusqlite::Connection) -> HashMap<String, i64> {
+        let mut stmt = conn.prepare(ALL_WORKSPACE_TIMES_SQL).unwrap();
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
+            .unwrap();
+        rows.map(|r| r.unwrap()).collect()
+    }
+
+    #[test]
+    fn batched_totals_match_the_per_workspace_query() {
+        let conn = test_db_with_sessions();
+        let all = all_workspace_times(&conn);
+
+        // The whole point of the batch query is that it cannot drift from the
+        // single-workspace one, so assert them against each other rather than
+        // against numbers copied from the fixture.
+        for id in ["w1", "w2"] {
+            assert_eq!(all[id], workspace_time(&conn, id), "mismatch for {id}");
+        }
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn batched_totals_include_never_timed_workspaces_as_zero() {
+        let conn = test_db_with_sessions();
+        conn.execute(
+            "INSERT INTO workspaces (id, name) VALUES ('w3', 'Brand new')",
+            [],
+        )
+        .unwrap();
+
+        let all = all_workspace_times(&conn);
+        // Absent would be indistinguishable from a deleted workspace, and the
+        // sidebar would have no total to draw a mark from.
+        assert_eq!(all.get("w3"), Some(&0));
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn batched_totals_respect_each_workspaces_own_reset_marker() {
+        let conn = test_db_with_sessions();
+        conn.execute(
+            "UPDATE workspaces
+             SET timer_reset_at = CAST(strftime('%s', 'now', '-1 hour') AS INTEGER)
+             WHERE id = 'w1'",
+            [],
+        )
+        .unwrap();
+
+        let all = all_workspace_times(&conn);
+        // w1 drops its two-hour-old session; w2, which was not reset, is whole.
+        assert_eq!(all["w1"], 300);
+        assert_eq!(all["w2"], 999);
     }
 
     #[test]

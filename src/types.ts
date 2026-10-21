@@ -196,6 +196,13 @@ export interface TimerController {
    * before the insert completes.
    */
   logVersion: number;
+  /**
+   * Bumps `logVersion` by hand, for changes to accumulated totals that are not
+   * a finished session -- resetting a workspace's time is the one case. Without
+   * it a reset updated only the panel that triggered it, and the sidebar's
+   * constellation kept the brightness of time the user had just cleared.
+   */
+  markChanged(): void;
   start(workspaceId: string, mode: SessionType): void;
   stop(workspaceId: string): void;
   reset(workspaceId: string): void;

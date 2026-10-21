@@ -68,8 +68,16 @@ webfonts load and Ember renders in a fallback face.
 
 ## `mark.js`
 
-The constellation generator, kept framework-free so both this folder and the app
-can use it. A workspace is hashed to seed a PRNG, points are placed on a
+The constellation generator, kept framework-free so these pages open in a
+browser with no build step.
+
+**The app does not import this file.** It ships `src/utils/constellation.ts`,
+which is the same algorithm in TypeScript. Two copies of an algorithm drift, and
+a mark that differs between the style guide and the app is worse than having no
+style guide — so rather than a comment asking people to keep them in sync,
+`src/utils/constellation.parity.test.ts` loads this file, executes it, and
+asserts it produces identical geometry for a spread of seeds and sizes. Change
+one without the other and the suite fails. A workspace is hashed to seed a PRNG, points are placed on a
 jittered grid, and a minimum spanning tree connects them — so the same workspace
 always produces the same figure, and no edges needlessly cross.
 

@@ -9,7 +9,7 @@ import Spotlight from "./components/Spotlight";
 import TimerAlert from "./components/TimerAlert";
 import { notifyPomodoroComplete } from "./utils/notify";
 import { useAppVersion } from "./utils/version";
-import { logTimerSession } from "./api/timers";
+import { getAllWorkspaceTimes, logTimerSession } from "./api/timers";
 import { getSettings } from "./api/settings";
 import {
   applyTheme,
@@ -51,6 +51,9 @@ function MainShell() {
   // Incremented after a session row is committed, so views showing accumulated
   // totals know exactly when a refetch will see the new data.
   const [logVersion, setLogVersion] = useState(0);
+  const [workspaceTimes, setWorkspaceTimes] = useState<Record<string, number>>(
+    {}
+  );
   const [pomodoroMinutes, setPomodoroMinutes] = useState(25);
   const [toast, setToast] = useState<{ id: number; message: string } | null>(
     null
@@ -230,6 +233,7 @@ function MainShell() {
       states: timers,
       pomodoroSeconds,
       logVersion,
+      markChanged: () => setLogVersion((v) => v + 1),
       start: startTimer,
       stop: stopTimer,
       reset: resetTimer,
@@ -261,6 +265,26 @@ function MainShell() {
   useEffect(() => {
     loadWorkspaces();
   }, [loadWorkspaces]);
+
+  // Every workspace's accumulated time in one call, for the sidebar's
+  // constellation marks. Batched deliberately: the per-workspace command would
+  // be an N+1 across the whole list, re-run on every logged session.
+  //
+  // Refetched when a session is committed or a total is reset (logVersion) and
+  // when the list itself changes. A failure is silent -- the marks fall back to
+  // their floor, which reads as a new workspace rather than as an error, and
+  // there is nothing the user could do about it anyway.
+  useEffect(() => {
+    let cancelled = false;
+    getAllWorkspaceTimes()
+      .then((times) => {
+        if (!cancelled) setWorkspaceTimes(times);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [logVersion, workspaces]);
 
   useEffect(() => {
     // Spotlight can select a workspace from the main window.
@@ -345,6 +369,7 @@ function MainShell() {
     <div className="flex h-full">
       <Sidebar
         workspaces={workspaces}
+        workspaceTimes={workspaceTimes}
         activeId={activeId}
         settingsActive={settingsOpen}
         onSelect={handleSelect}
