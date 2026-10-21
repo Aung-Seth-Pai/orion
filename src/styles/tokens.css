@@ -54,10 +54,14 @@
   --accent-soft: rgba(99, 102, 241, 0.14);
   --focus: #6366f1;
   --selection: rgba(99, 102, 241, 0.35);
-  /* Text and icons placed ON an accent fill. Not derivable from --accent: the
-     first three accents are mid-tones that need white on them, while Almanac's
-     accent is near-white and would render a white label invisible. */
+  /* Foreground for text and icons sitting ON a filled control. One token per
+     fill because they genuinely differ -- measured, not assumed. Graphite keeps
+     white throughout, which is what it ships today; the other three are dark,
+     because their fills are mid-tones a white label disappears into. */
   --accent-on: #ffffff;
+  --positive-on: #ffffff;
+  --danger-on: #ffffff;
+  --caution-on: #ffffff;
 
   /* ── Signals. The -ink variants are the legible-on-dark text versions; the
         bare token is for fills and borders. ─────────────────────────────── */
@@ -116,8 +120,8 @@
 
   --ink-strong: #f5f3ef;
   --ink: #e9e7e2;
-  --ink-muted: #8a90a0;
-  --ink-faint: #555c6b;
+  --ink-muted: #a5a9b6;
+  --ink-faint: #7e838f;
   --ink-ghost: #3e4450;
 
   --rule: rgba(255, 255, 255, 0.07);
@@ -129,6 +133,9 @@
   --accent-soft: rgba(124, 166, 224, 0.14);
   --selection: rgba(124, 166, 224, 0.32);
   --accent-on: #0a0c10;
+  --positive-on: #0a0c10;
+  --danger-on: #0a0c10;
+  --caution-on: #0a0c10;
   --focus: #7ca6e0;
 
   --positive: #46c68f;
@@ -157,8 +164,8 @@
 
   --ink-strong: #faf4ea;
   --ink: #f2ebe1;
-  --ink-muted: #9c9187;
-  --ink-faint: #6a5f56;
+  --ink-muted: #b3aba3;
+  --ink-faint: #8d847d;
   --ink-ghost: #4e443c;
 
   --rule: rgba(255, 240, 225, 0.09);
@@ -170,11 +177,14 @@
   --accent-soft: rgba(208, 124, 67, 0.14);
   --selection: rgba(208, 124, 67, 0.32);
   --accent-on: #14110f;
+  --positive-on: #14110f;
+  --danger-on: #14110f;
+  --caution-on: #14110f;
   --focus: #d07c43;
 
   --positive: #7d9d63;
   --positive-ink: #9cba81;
-  --danger: #c85a4a;
+  --danger: #c95e4e;
   --danger-ink: #dd8071;
   --caution: #c9962f;
   --caution-ink: #e0b765;
@@ -215,8 +225,8 @@
 
   --ink-strong: #f5f4f1;
   --ink: #ebeae6;
-  --ink-muted: #848994;
-  --ink-faint: #4f555f;
+  --ink-muted: #a8acb4;
+  --ink-faint: #80858c;
   --ink-ghost: #3a404a;
 
   --rule: rgba(255, 255, 255, 0.055);
@@ -228,6 +238,9 @@
   --accent-soft: rgba(255, 255, 255, 0.07);
   --selection: rgba(255, 255, 255, 0.18);
   --accent-on: #0b0d11;
+  --positive-on: #0b0d11;
+  --danger-on: #0b0d11;
+  --caution-on: #0b0d11;
   --focus: #ebeae6;
 
   --positive: #86a894;
@@ -260,6 +273,26 @@
   --nav-active-bg: var(--raised);
   --nav-active-marker: 2px;
   --mark-size: 18px;
+}
+
+/* ── Script kinds ───────────────────────────────────────────────────────────
+   Categorical, not semantic. These say which interpreter a script runs under,
+   and their whole job is to be told apart from one another -- "cmd" is not a
+   warning and "node" is not a success, so routing them through --caution and
+   --positive would be a lie that happened to look right.
+
+   Deliberately NOT per-theme either: a label that changed hue with the palette
+   would stop being a label. They are picked to read on a dark surface, which
+   all four themes are.
+
+   (An earlier pass folded PowerShell and Python into one token and made them
+   indistinguishable, which is the failure this section exists to prevent.) */
+:root {
+  --kind-powershell: #93c5fd;
+  --kind-cmd: #fde047;
+  --kind-python: #7dd3fc;
+  --kind-node: #86efac;
+  --kind-wsl: #fdba74;
 }
 
 /* ── Motion ─────────────────────────────────────────────────────────────────

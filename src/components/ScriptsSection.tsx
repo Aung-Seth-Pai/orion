@@ -29,12 +29,14 @@ const TYPE_LABELS: Record<ScriptType, string> = {
   wsl_bash: "WSL Bash",
 };
 
+/** Categorical hues, defined in tokens.css -- see the note there on why these
+ *  are not semantic tokens and not per-theme. */
 const TYPE_BADGE: Record<ScriptType, string> = {
-  powershell: "bg-blue-500/15 text-blue-300",
-  cmd: "bg-yellow-500/15 text-yellow-300",
-  python: "bg-sky-500/15 text-sky-300",
-  node: "bg-green-500/15 text-green-300",
-  wsl_bash: "bg-orange-500/15 text-orange-300",
+  powershell: "bg-kind-powershell/15 text-kind-powershell",
+  cmd: "bg-kind-cmd/15 text-kind-cmd",
+  python: "bg-kind-python/15 text-kind-python",
+  node: "bg-kind-node/15 text-kind-node",
+  wsl_bash: "bg-kind-wsl/15 text-kind-wsl",
 };
 
 const PLACEHOLDERS: Record<ScriptType, string> = {
@@ -225,23 +227,23 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
         />
       )}
       <div className="mb-2 flex items-center gap-2">
-        <ScrollText size={13} className="text-zinc-500" />
-        <h3 className="text-[11px] font-semibold tracking-wider text-zinc-400 uppercase">
+        <ScrollText size={13} className="text-ink-faint" />
+        <h3 className="text-[11px] font-semibold tracking-wider text-ink-muted uppercase">
           Automation Scripts
         </h3>
-        <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400 tabular-nums">
+        <span className="rounded bg-raised px-1.5 py-0.5 text-[10px] text-ink-muted tabular-nums">
           {scripts.length}
         </span>
         <button
           onClick={() => setEnvVarsOpen(true)}
-          className="ml-auto flex items-center gap-1 rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-zinc-100 cursor-default"
+          className="ml-auto flex items-center gap-1 rounded bg-raised px-2 py-0.5 text-[11px] font-medium text-ink-muted transition-colors hover:bg-raised-hover hover:text-ink-strong cursor-default"
         >
           <KeyRound size={11} />
           Variables
         </button>
         <button
           onClick={() => (composerOpen ? closeComposer() : setComposerOpen(true))}
-          className="flex items-center gap-1 rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-medium text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-zinc-100 cursor-default"
+          className="flex items-center gap-1 rounded bg-raised px-2 py-0.5 text-[11px] font-medium text-ink-muted transition-colors hover:bg-raised-hover hover:text-ink-strong cursor-default"
         >
           {composerOpen ? <X size={11} /> : <Plus size={11} />}
           {composerOpen ? "Cancel" : "New"}
@@ -249,7 +251,7 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
       </div>
 
       {composerOpen && (
-        <div className="mb-3 rounded-lg border border-zinc-700/60 bg-zinc-900 p-3">
+        <div className="mb-3 rounded-lg border border-rule-strong/60 bg-surface p-3">
           <div className="mb-2 flex gap-2">
             <input
               ref={titleRef}
@@ -258,12 +260,12 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
               onKeyDown={onKeyDown}
               maxLength={120}
               placeholder="Script title…"
-              className="min-w-0 flex-1 rounded bg-zinc-800 px-2.5 py-1.5 text-[13px] text-zinc-100 placeholder-zinc-500 outline-none ring-1 ring-transparent focus:ring-indigo-500/50"
+              className="min-w-0 flex-1 rounded bg-raised px-2.5 py-1.5 text-[13px] text-ink-strong placeholder-ink-faint outline-none ring-1 ring-transparent focus:ring-focus/50"
             />
             <select
               value={scriptType}
               onChange={(e) => setScriptType(e.target.value as ScriptType)}
-              className="rounded bg-zinc-800 px-2.5 py-1.5 text-[13px] text-zinc-200 outline-none ring-1 ring-transparent focus:ring-indigo-500/50"
+              className="rounded bg-raised px-2.5 py-1.5 text-[13px] text-ink outline-none ring-1 ring-transparent focus:ring-focus/50"
             >
               {SCRIPT_TYPES.map((t) => (
                 <option key={t} value={t}>
@@ -279,16 +281,16 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
             rows={6}
             spellCheck={false}
             placeholder={`# ${PLACEHOLDERS[scriptType]}`}
-            className="w-full resize-y rounded bg-zinc-950 p-2.5 font-mono text-xs text-zinc-200 placeholder-zinc-600 outline-none ring-1 ring-transparent focus:ring-indigo-500/50"
+            className="w-full resize-y rounded bg-void p-2.5 font-mono text-xs text-ink placeholder-ink-faint outline-none ring-1 ring-transparent focus:ring-focus/50"
           />
           <div className="mt-2 flex items-center justify-between">
-            <span className="text-[10px] text-zinc-600">
+            <span className="text-[10px] text-ink-faint">
               Ctrl+Enter to save · Esc to cancel
             </span>
             <button
               onClick={() => void handleSubmit()}
               disabled={!title.trim() || !content.trim() || saving}
-              className="flex items-center gap-1.5 rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white transition-colors enabled:hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex items-center gap-1.5 rounded bg-positive px-3 py-1 text-xs font-medium text-positive-on transition-colors enabled:hover:bg-positive disabled:cursor-not-allowed disabled:opacity-40"
             >
               {saving ? (
                 <Loader2 size={12} className="animate-spin" />
@@ -302,11 +304,11 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
       )}
 
       {loading ? (
-        <p className="py-4 text-center text-sm text-zinc-600">Loading scripts…</p>
+        <p className="py-4 text-center text-sm text-ink-faint">Loading scripts…</p>
       ) : scripts.length === 0 && !composerOpen ? (
-        <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-zinc-800 py-6 text-center">
-          <ScrollText size={20} className="text-zinc-700" />
-          <p className="text-xs text-zinc-500">
+        <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-rule py-6 text-center">
+          <ScrollText size={20} className="text-ink-ghost" />
+          <p className="text-xs text-ink-faint">
             No scripts yet. Automate PowerShell, CMD, Python, Node or WSL Bash.
           </p>
         </div>
@@ -318,12 +320,12 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
               <li
                 key={script.id}
                 {...dragProps(script.id)}
-                className={`group relative rounded-lg border bg-zinc-900/70 transition-colors ${
+                className={`group relative rounded-lg border bg-surface/70 transition-colors ${
                   draggingId === script.id ? "opacity-40" : ""
                 } ${
                   overId === script.id
-                    ? "border-indigo-500/70"
-                    : "border-zinc-800 hover:border-zinc-700"
+                    ? "border-accent/70"
+                    : "border-rule hover:border-rule-strong"
                 }`}
               >
                 <div className="flex items-center gap-2 px-3 pt-2.5 pb-2">
@@ -332,13 +334,13 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
                   >
                     {TYPE_LABELS[script.scriptType]}
                   </span>
-                  <span className="truncate text-[13px] font-medium text-zinc-200">
+                  <span className="truncate text-[13px] font-medium text-ink">
                     {script.title}
                   </span>
                   {script.workspaceId === null && (
                     <span
                       title="Global script"
-                      className="rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] tracking-wide text-zinc-400 uppercase"
+                      className="rounded bg-raised px-1.5 py-0.5 text-[9px] tracking-wide text-ink-muted uppercase"
                     >
                       global
                     </span>
@@ -348,14 +350,14 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
                     tabIndex={-1}
                     title="Delete script"
                     onClick={() => void handleDelete(script.id)}
-                    className="ml-auto rounded p-1 text-zinc-600 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
+                    className="ml-auto rounded p-1 text-ink-faint opacity-0 transition-opacity hover:text-danger-ink group-hover:opacity-100"
                   >
                     <Trash2 size={13} />
                   </span>
                   <button
                     onClick={() => openEdit(script)}
                     title="Edit script"
-                    className="rounded p-1 text-zinc-500 opacity-0 transition-opacity hover:text-indigo-300 group-hover:opacity-100 cursor-default"
+                    className="rounded p-1 text-ink-faint opacity-0 transition-opacity hover:text-accent-ink group-hover:opacity-100 cursor-default"
                   >
                     <Pencil size={13} />
                   </button>
@@ -363,7 +365,7 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
                     onClick={() => void handleRun(script.id)}
                     disabled={running}
                     title="Execute script"
-                    className="flex items-center gap-1 rounded bg-emerald-600/90 px-2 py-0.5 text-[11px] font-medium text-white transition-colors enabled:hover:bg-emerald-500 disabled:opacity-50 cursor-default"
+                    className="flex items-center gap-1 rounded bg-positive/90 px-2 py-0.5 text-[11px] font-medium text-positive-on transition-colors enabled:hover:bg-positive disabled:opacity-50 cursor-default"
                   >
                     {running ? (
                       <Loader2 size={11} className="animate-spin" />
@@ -375,7 +377,7 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
                 </div>
 
                 {outputs[script.id] !== undefined && (
-                  <pre className="mx-3 mb-3 max-h-48 overflow-auto rounded bg-zinc-950 p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-zinc-300 ring-1 ring-zinc-800">
+                  <pre className="mx-3 mb-3 max-h-48 overflow-auto rounded bg-void p-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-ink-muted ring-1 ring-rule">
                     {outputs[script.id]}
                   </pre>
                 )}

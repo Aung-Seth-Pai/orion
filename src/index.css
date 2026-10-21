@@ -34,12 +34,21 @@
   --color-focus: var(--focus);
 
   --color-positive: var(--positive);
+  --color-positive-on: var(--positive-on);
   --color-positive-ink: var(--positive-ink);
   --color-danger: var(--danger);
+  --color-danger-on: var(--danger-on);
   --color-danger-ink: var(--danger-ink);
   --color-caution: var(--caution);
+  --color-caution-on: var(--caution-on);
   --color-caution-ink: var(--caution-ink);
   --color-info-ink: var(--info-ink);
+
+  --color-kind-powershell: var(--kind-powershell);
+  --color-kind-cmd: var(--kind-cmd);
+  --color-kind-python: var(--kind-python);
+  --color-kind-node: var(--kind-node);
+  --color-kind-wsl: var(--kind-wsl);
 }
 
 html,

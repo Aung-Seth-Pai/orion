@@ -451,7 +451,7 @@ function MainShell() {
           key={toast.id}
           className="fixed bottom-10 right-4 z-50 flex items-center gap-2 rounded-lg border border-positive/40 bg-surface/95 px-3.5 py-2.5 shadow-2xl shadow-black/50 backdrop-blur"
         >
-          <CheckCircle2 size={15} className="shrink-0 text-emerald-400" />
+          <CheckCircle2 size={15} className="shrink-0 text-positive-ink" />
           <span className="text-xs leading-snug text-ink">
             {toast.message}
           </span>

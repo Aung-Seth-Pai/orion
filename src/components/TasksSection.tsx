@@ -78,17 +78,17 @@ export default function TasksSection({ workspace, onError }: TasksSectionProps) 
   return (
     <section>
       <div className="mb-2 flex items-center gap-2">
-        <ListTodo size={13} className="text-zinc-500" />
-        <h3 className="text-[11px] font-semibold tracking-wider text-zinc-400 uppercase">
+        <ListTodo size={13} className="text-ink-faint" />
+        <h3 className="text-[11px] font-semibold tracking-wider text-ink-muted uppercase">
           Tasks
         </h3>
-        <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-400 tabular-nums">
+        <span className="rounded bg-raised px-1.5 py-0.5 text-[10px] text-ink-muted tabular-nums">
           {tasks.length > 0 ? `${doneCount}/${tasks.length}` : "0"}
         </span>
       </div>
 
-      <div className="mb-2 flex items-center gap-2 rounded-md bg-zinc-900/70 px-3 py-1.5 ring-1 ring-zinc-800 focus-within:ring-indigo-500/40">
-        <Plus size={13} className="shrink-0 text-zinc-600" />
+      <div className="mb-2 flex items-center gap-2 rounded-md bg-surface/70 px-3 py-1.5 ring-1 ring-rule focus-within:ring-focus/40">
+        <Plus size={13} className="shrink-0 text-ink-faint" />
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -100,35 +100,35 @@ export default function TasksSection({ workspace, onError }: TasksSectionProps) 
           }}
           maxLength={120}
           placeholder="Add a task and press Enter…"
-          className="w-full bg-transparent text-[13px] text-zinc-200 placeholder-zinc-600 outline-none"
+          className="w-full bg-transparent text-[13px] text-ink placeholder-ink-faint outline-none"
         />
-        {adding && <Loader2 size={12} className="animate-spin text-zinc-500" />}
+        {adding && <Loader2 size={12} className="animate-spin text-ink-faint" />}
       </div>
 
       {loading ? (
-        <p className="py-3 text-center text-xs text-zinc-600">Loading tasks…</p>
+        <p className="py-3 text-center text-xs text-ink-faint">Loading tasks…</p>
       ) : tasks.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-zinc-800 py-4 text-center text-xs text-zinc-600">
+        <p className="rounded-lg border border-dashed border-rule py-4 text-center text-xs text-ink-faint">
           No tasks yet for this workspace.
         </p>
       ) : (
         <ul className="space-y-0.5">
           {tasks.map((task) => (
-            <li key={task.id} className="group flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-zinc-800/40">
+            <li key={task.id} className="group flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-raised/40">
               <button
                 onClick={() => void handleToggle(task)}
                 title={task.isCompleted ? "Mark as not done" : "Mark as done"}
                 className={`flex size-4 shrink-0 items-center justify-center rounded border transition-colors ${
                   task.isCompleted
-                    ? "border-emerald-500 bg-emerald-500 text-white"
-                    : "border-zinc-600 hover:border-emerald-400"
+                    ? "border-positive bg-positive text-positive-on"
+                    : "border-rule-strong hover:border-positive-ink"
                 }`}
               >
                 {task.isCompleted && <Check size={11} strokeWidth={3} />}
               </button>
               <span
                 className={`min-w-0 flex-1 truncate text-[13px] ${
-                  task.isCompleted ? "text-zinc-600 line-through" : "text-zinc-300"
+                  task.isCompleted ? "text-ink-faint line-through" : "text-ink-muted"
                 }`}
               >
                 {task.title}
@@ -136,7 +136,7 @@ export default function TasksSection({ workspace, onError }: TasksSectionProps) 
               <button
                 onClick={() => void handleDelete(task.id)}
                 title="Delete task"
-                className="rounded p-0.5 text-zinc-600 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
+                className="rounded p-0.5 text-ink-faint opacity-0 transition-opacity hover:text-danger-ink group-hover:opacity-100"
               >
                 <Trash2 size={13} />
               </button>

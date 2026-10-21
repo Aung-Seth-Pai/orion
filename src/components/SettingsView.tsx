@@ -115,11 +115,11 @@ function DebouncedPathInput({
 
   return (
     <div>
-      <label htmlFor={id} className="block text-[13px] font-medium text-zinc-200">
+      <label htmlFor={id} className="block text-[13px] font-medium text-ink">
         {label}
       </label>
       {description && (
-        <p className="mt-0.5 mb-2 text-xs leading-relaxed text-zinc-500">
+        <p className="mt-0.5 mb-2 text-xs leading-relaxed text-ink-faint">
           {description}
         </p>
       )}
@@ -141,7 +141,7 @@ function DebouncedPathInput({
         disabled={disabled}
         spellCheck={false}
         placeholder={placeholder}
-        className="w-full max-w-xs rounded bg-zinc-800 px-2.5 py-1.5 font-mono text-[13px] text-zinc-100 placeholder-zinc-500 outline-none ring-1 ring-transparent focus:ring-indigo-500/50 disabled:opacity-40"
+        className="w-full max-w-xs rounded bg-raised px-2.5 py-1.5 font-mono text-[13px] text-ink-strong placeholder-ink-faint outline-none ring-1 ring-transparent focus:ring-focus/50 disabled:opacity-40"
       />
     </div>
   );
@@ -168,12 +168,14 @@ function Toggle({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={`relative h-5 w-10 shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-        checked ? "bg-indigo-500" : "bg-zinc-700"
+        checked ? "bg-accent" : "bg-raised-hover"
       }`}
     >
       <span
-        className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
-          checked ? "translate-x-5" : ""
+        className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full shadow transition-transform ${
+          // Not plain white: Almanac's accent is itself near-white, so a white
+          // knob on a checked switch vanishes into its own track.
+          checked ? "translate-x-5 bg-accent-on" : "bg-ink-strong"
         }`}
       />
     </button>
@@ -429,17 +431,17 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
 
   return (
     <section className="flex min-h-0 flex-1 flex-col">
-      <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-zinc-800/80 px-4">
-        <h2 className="text-sm font-medium text-zinc-200">Settings</h2>
-        <div className="ml-auto flex overflow-hidden rounded-md ring-1 ring-zinc-700">
+      <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-rule/80 px-4">
+        <h2 className="text-sm font-medium text-ink">Settings</h2>
+        <div className="ml-auto flex overflow-hidden rounded-md ring-1 ring-rule-strong">
           {TABS.map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
               className={`px-3 py-1 text-xs font-medium transition-colors cursor-default ${
                 tab === t
-                  ? "bg-indigo-500 text-white"
-                  : "text-zinc-400 hover:text-zinc-200"
+                  ? "bg-accent text-accent-on"
+                  : "text-ink-muted hover:text-ink"
               }`}
             >
               {TAB_LABELS[t]}
@@ -453,18 +455,18 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
           {tab === "general" && (
             <div className="space-y-2">
               <ThemePicker onError={onError} />
-              <div className="flex items-center gap-4 rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
+              <div className="flex items-center gap-4 rounded-lg border border-rule bg-surface/70 p-4">
                 <div className="min-w-0 flex-1">
-                  <p className="text-[13px] font-medium text-zinc-200">
+                  <p className="text-[13px] font-medium text-ink">
                     Launch on System Startup
                   </p>
-                  <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
+                  <p className="mt-0.5 text-xs leading-relaxed text-ink-faint">
                     Start Orion automatically in the background when you sign
                     in to your computer. Only the tray icon will appear.
                   </p>
                 </div>
                 {!settingsLoaded ? (
-                  <Loader2 size={16} className="animate-spin text-zinc-600" />
+                  <Loader2 size={16} className="animate-spin text-ink-faint" />
                 ) : (
                   <Toggle
                     checked={startWithWindows}
@@ -473,7 +475,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                 )}
               </div>
 
-              <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
+              <div className="rounded-lg border border-rule bg-surface/70 p-4">
                 <DebouncedPathInput
                   id="default-ide"
                   label="Default IDE Command"
@@ -485,11 +487,11 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                 />
               </div>
 
-              <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
-                <p className="text-[13px] font-medium text-zinc-200">
+              <div className="rounded-lg border border-rule bg-surface/70 p-4">
+                <p className="text-[13px] font-medium text-ink">
                   Custom Interpreters
                 </p>
-                <p className="mt-0.5 mb-3 text-xs leading-relaxed text-zinc-500">
+                <p className="mt-0.5 mb-3 text-xs leading-relaxed text-ink-faint">
                   Point script execution at specific executables — for example
                   a virtual environment's Python. Leave blank to use the
                   system default.
@@ -516,14 +518,14 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                 </div>
               </div>
 
-              <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
+              <div className="rounded-lg border border-rule bg-surface/70 p-4">
                 <label
                   htmlFor="pomodoro-minutes"
-                  className="block text-[13px] font-medium text-zinc-200"
+                  className="block text-[13px] font-medium text-ink"
                 >
                   Pomodoro Duration (minutes)
                 </label>
-                <p className="mt-0.5 mb-2 text-xs leading-relaxed text-zinc-500">
+                <p className="mt-0.5 mb-2 text-xs leading-relaxed text-ink-faint">
                   Countdown length for pomodoro sessions (1–180). Applies to
                   new timers immediately.
                 </p>
@@ -543,15 +545,15 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                     }
                   }}
                   disabled={!settingsLoaded}
-                  className="w-24 rounded bg-zinc-800 px-2.5 py-1.5 text-center text-[13px] tabular-nums text-zinc-100 outline-none ring-1 ring-transparent focus:ring-indigo-500/50 disabled:opacity-40"
+                  className="w-24 rounded bg-raised px-2.5 py-1.5 text-center text-[13px] tabular-nums text-ink-strong outline-none ring-1 ring-transparent focus:ring-focus/50 disabled:opacity-40"
                 />
               </div>
 
-              <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
-                <p className="text-[13px] font-medium text-zinc-200">
+              <div className="rounded-lg border border-rule bg-surface/70 p-4">
+                <p className="text-[13px] font-medium text-ink">
                   Global Search Shortcut
                 </p>
-                <p className="mt-0.5 mb-2.5 text-xs leading-relaxed text-zinc-500">
+                <p className="mt-0.5 mb-2.5 text-xs leading-relaxed text-ink-faint">
                   Summons the search window from anywhere in Windows. If another
                   app already owns the combination, Orion keeps the previous one
                   and tells you.
@@ -563,22 +565,22 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                 />
               </div>
 
-              <p className="px-1 pt-1 text-[10px] text-zinc-600">
+              <p className="px-1 pt-1 text-[10px] text-ink-faint">
                 Autostart is applied immediately via the Windows registry.
               </p>
 
-              <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
-                <p className="text-[13px] font-medium text-zinc-200">
+              <div className="rounded-lg border border-rule bg-surface/70 p-4">
+                <p className="text-[13px] font-medium text-ink">
                   Troubleshooting &amp; Updates
                 </p>
-                <p className="mt-0.5 mb-3 text-xs leading-relaxed text-zinc-500">
+                <p className="mt-0.5 mb-3 text-xs leading-relaxed text-ink-faint">
                   Inspect application logs or check the release server for a
                   newer build.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={handleOpenLogs}
-                    className="flex items-center gap-1.5 rounded bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-100 transition-colors hover:bg-zinc-600"
+                    className="flex items-center gap-1.5 rounded bg-raised-hover px-3 py-1.5 text-xs font-medium text-ink-strong transition-colors hover:bg-ink-ghost"
                   >
                     <FolderOpen size={13} />
                     Open Log Folder
@@ -586,7 +588,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                   <button
                     onClick={() => void handleCheckUpdates()}
                     disabled={checkingUpdates}
-                    className="flex items-center gap-1.5 rounded bg-indigo-500/90 px-3 py-1.5 text-xs font-medium text-white transition-colors enabled:hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="flex items-center gap-1.5 rounded bg-accent/90 px-3 py-1.5 text-xs font-medium text-accent-on transition-colors enabled:hover:bg-accent-bright disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {checkingUpdates ? (
                       <Loader2 size={13} className="animate-spin" />
@@ -597,7 +599,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                   </button>
                 </div>
                 {updateStatus && (
-                  <p className="mt-2.5 text-xs leading-relaxed text-zinc-400">
+                  <p className="mt-2.5 text-xs leading-relaxed text-ink-muted">
                     {updateStatus}
                   </p>
                 )}
@@ -607,41 +609,41 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
 
           {tab === "ai" && (
             <div className="space-y-3">
-              <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
+              <div className="rounded-lg border border-rule bg-surface/70 p-4">
                 <div className="mb-3 flex items-start gap-3">
-                  <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded bg-indigo-500/15 text-indigo-400">
+                  <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded bg-accent/15 text-accent-ink">
                     <Sparkles size={14} />
                   </span>
                   <div className="min-w-0">
-                    <p className="text-[13px] font-medium text-zinc-200">
+                    <p className="text-[13px] font-medium text-ink">
                       Semantic Search
                     </p>
-                    <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
+                    <p className="mt-0.5 text-xs leading-relaxed text-ink-faint">
                       Find things by meaning instead of exact words — searching
                       “deploy my app live” can surface a script called “Ship the
                       release to production”. Type{" "}
-                      <span className="font-mono text-zinc-400">/ai</span> in the
+                      <span className="font-mono text-ink-muted">/ai</span> in the
                       search bar once this is enabled.
                     </p>
                   </div>
                 </div>
 
-                <dl className="mb-3 grid grid-cols-2 gap-2 border-t border-zinc-800 pt-3 text-xs">
+                <dl className="mb-3 grid grid-cols-2 gap-2 border-t border-rule pt-3 text-xs">
                   <div>
-                    <dt className="text-zinc-500">Model</dt>
+                    <dt className="text-ink-faint">Model</dt>
                     <dd className="mt-0.5 font-medium">
                       {aiStatus === null ? (
-                        <span className="text-zinc-600">Checking…</span>
+                        <span className="text-ink-faint">Checking…</span>
                       ) : aiStatus.downloaded ? (
-                        <span className="text-emerald-400">Ready</span>
+                        <span className="text-positive-ink">Ready</span>
                       ) : (
-                        <span className="text-zinc-400">Not downloaded</span>
+                        <span className="text-ink-muted">Not downloaded</span>
                       )}
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-zinc-500">On disk</dt>
-                    <dd className="mt-0.5 font-medium text-zinc-300">
+                    <dt className="text-ink-faint">On disk</dt>
+                    <dd className="mt-0.5 font-medium text-ink-muted">
                       {aiStatus === null
                         ? "—"
                         : aiStatus.modelBytes === 0
@@ -650,8 +652,8 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                     </dd>
                   </div>
                   <div>
-                    <dt className="text-zinc-500">Indexed items</dt>
-                    <dd className="mt-0.5 font-medium text-zinc-300">
+                    <dt className="text-ink-faint">Indexed items</dt>
+                    <dd className="mt-0.5 font-medium text-ink-muted">
                       {aiStatus === null
                         ? "—"
                         : `${aiStatus.indexedCount} of ${aiStatus.indexableCount}`}
@@ -663,7 +665,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                     empty index is expected rather than out of date. */}
                 {aiStatus?.downloaded &&
                   aiStatus.indexedCount < aiStatus.indexableCount && (
-                    <p className="mb-3 flex items-start gap-2 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-xs leading-relaxed text-amber-200/90">
+                    <p className="mb-3 flex items-start gap-2 rounded border border-caution/30 bg-caution/10 px-2.5 py-2 text-xs leading-relaxed text-caution-ink/90">
                       <AlertTriangle size={13} className="mt-0.5 shrink-0" />
                       <span>
                         {aiStatus.indexableCount - aiStatus.indexedCount} item(s)
@@ -678,7 +680,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                   <button
                     onClick={() => void handleBuildIndex()}
                     disabled={buildingIndex || removingModel || aiStatus === null}
-                  className="flex items-center gap-1.5 rounded bg-indigo-500/90 px-3 py-1.5 text-xs font-medium text-white transition-colors enabled:hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex items-center gap-1.5 rounded bg-accent/90 px-3 py-1.5 text-xs font-medium text-accent-on transition-colors enabled:hover:bg-accent-bright disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {/* Fetching ~90 MB and re-embedding what is already local
                       are different actions and should not share an icon. */}
@@ -701,7 +703,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                     <button
                       onClick={() => void handleRemoveModel()}
                       disabled={removingModel || buildingIndex}
-                      className="flex items-center gap-1.5 rounded border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-400 transition-colors enabled:hover:border-red-500/50 enabled:hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="flex items-center gap-1.5 rounded border border-rule-strong px-3 py-1.5 text-xs font-medium text-ink-muted transition-colors enabled:hover:border-danger/50 enabled:hover:text-danger-ink disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {removingModel ? (
                         <Loader2 size={13} className="animate-spin" />
@@ -714,25 +716,25 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                 </div>
 
                 {buildingIndex && (
-                  <p className="mt-2.5 text-xs leading-relaxed text-zinc-400">
+                  <p className="mt-2.5 text-xs leading-relaxed text-ink-muted">
                     {aiStatus?.downloaded
                       ? "Re-embedding every item. You can keep using Orion while it works."
                       : "The one-time ~90 MB download can take several minutes. It resumes automatically if the connection drops, and you can keep using Orion while it works."}
                   </p>
                 )}
                 {aiMessage && !buildingIndex && (
-                  <p className="mt-2.5 flex items-start gap-1.5 text-xs leading-relaxed text-emerald-400">
+                  <p className="mt-2.5 flex items-start gap-1.5 text-xs leading-relaxed text-positive-ink">
                     <Check size={13} className="mt-0.5 shrink-0" />
                     {aiMessage}
                   </p>
                 )}
               </div>
 
-              <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
-                <p className="text-[13px] font-medium text-zinc-200">
+              <div className="rounded-lg border border-rule bg-surface/70 p-4">
+                <p className="text-[13px] font-medium text-ink">
                   What leaves your computer
                 </p>
-                <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
+                <p className="mt-0.5 text-xs leading-relaxed text-ink-faint">
                   Only the one-time model download itself. The model then runs
                   locally on your CPU — your workspaces, links, scripts and
                   search queries are never uploaded anywhere. Remove model
@@ -745,18 +747,18 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
 
           {tab === "data" && (
             <div className="space-y-3">
-              <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
-                <p className="text-[13px] font-medium text-zinc-200">
+              <div className="rounded-lg border border-rule bg-surface/70 p-4">
+                <p className="text-[13px] font-medium text-ink">
                   Export data backup
                 </p>
-                <p className="mt-0.5 mb-3 text-xs leading-relaxed text-zinc-500">
+                <p className="mt-0.5 mb-3 text-xs leading-relaxed text-ink-faint">
                   Download all workspaces, resources, scripts and timer history
                   as a single JSON file.
                 </p>
                 <button
                   onClick={() => void handleExport()}
                   disabled={exporting}
-                  className="flex items-center gap-1.5 rounded bg-indigo-500/90 px-3 py-1.5 text-xs font-medium text-white transition-colors enabled:hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex items-center gap-1.5 rounded bg-accent/90 px-3 py-1.5 text-xs font-medium text-accent-on transition-colors enabled:hover:bg-accent-bright disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {exporting ? (
                     <Loader2 size={13} className="animate-spin" />
@@ -767,24 +769,24 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                 </button>
               </div>
 
-              <div className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
-                <p className="text-[13px] font-medium text-zinc-200">
+              <div className="rounded-lg border border-rule bg-surface/70 p-4">
+                <p className="text-[13px] font-medium text-ink">
                   Import data
                 </p>
-                <p className="mt-0.5 mb-2 text-xs leading-relaxed text-zinc-500">
+                <p className="mt-0.5 mb-2 text-xs leading-relaxed text-ink-faint">
                   Restore from an orion_backup.json file. Your workspace,
                   resource and script ordering is preserved.
-                  <span className="text-yellow-500/90">
+                  <span className="text-caution-ink">
                     {" "}
                     This replaces all existing data.
                   </span>
                 </p>
-                <p className="mb-3 flex items-start gap-1.5 text-xs leading-relaxed text-zinc-500">
-                  <Sparkles size={12} className="mt-0.5 shrink-0 text-indigo-400" />
+                <p className="mb-3 flex items-start gap-1.5 text-xs leading-relaxed text-ink-faint">
+                  <Sparkles size={12} className="mt-0.5 shrink-0 text-accent-ink" />
                   <span>
                     Using semantic search? An import clears the AI index, so
                     rebuild it afterwards in the{" "}
-                    <span className="text-zinc-400">AI Search</span> tab.
+                    <span className="text-ink-muted">AI Search</span> tab.
                   </span>
                 </p>
                 <input
@@ -797,7 +799,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   disabled={importing}
-                  className="flex items-center gap-1.5 rounded bg-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-100 transition-colors enabled:hover:bg-zinc-600 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex items-center gap-1.5 rounded bg-raised-hover px-3 py-1.5 text-xs font-medium text-ink-strong transition-colors enabled:hover:bg-ink-ghost disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {importing ? (
                     <Loader2 size={13} className="animate-spin" />
@@ -809,7 +811,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
               </div>
 
               {statusMessage && (
-                <p className="flex items-center gap-1.5 px-1 text-xs text-emerald-400">
+                <p className="flex items-center gap-1.5 px-1 text-xs text-positive-ink">
                   <Check size={12} />
                   {statusMessage}
                 </p>
@@ -826,20 +828,20 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
           onKeyDown={(e) => {
             if (e.key === "Escape") setPendingFile(null);
           }}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-void/70 backdrop-blur-sm"
         >
-          <div className="mx-4 w-full max-w-md rounded-xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+          <div className="mx-4 w-full max-w-md rounded-xl border border-rule-strong bg-surface p-5 shadow-2xl">
             <div className="mb-3 flex items-start gap-3">
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-red-500/15 text-red-400">
+              <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-danger/15 text-danger-ink">
                 <AlertTriangle size={18} />
               </span>
               <div>
-                <h3 className="text-sm font-semibold text-zinc-100">
+                <h3 className="text-sm font-semibold text-ink-strong">
                   Replace all data?
                 </h3>
-                <p className="mt-1 text-xs leading-relaxed text-zinc-400">
+                <p className="mt-1 text-xs leading-relaxed text-ink-muted">
                   Importing{" "}
-                  <span className="font-mono text-zinc-300">
+                  <span className="font-mono text-ink-muted">
                     {pendingFile.name}
                   </span>{" "}
                   will permanently delete your current workspaces, resources,
@@ -851,7 +853,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
             <div className="mt-4 flex justify-end gap-2">
               <button
                 onClick={() => setPendingFile(null)}
-                className="flex items-center gap-1 rounded bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700"
+                className="flex items-center gap-1 rounded bg-raised px-3 py-1.5 text-xs font-medium text-ink-muted transition-colors hover:bg-raised-hover"
               >
                 <X size={12} />
                 Cancel
@@ -860,7 +862,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                 autoFocus
                 onClick={() => void confirmImport()}
                 disabled={importing}
-                className="flex items-center gap-1.5 rounded bg-red-600 px-3 py-1.5 text-xs font-medium text-white transition-colors enabled:hover:bg-red-500 disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded bg-danger px-3 py-1.5 text-xs font-medium text-danger-on transition-colors enabled:hover:bg-danger disabled:opacity-50"
               >
                 {importing && <Loader2 size={12} className="animate-spin" />}
                 Replace everything

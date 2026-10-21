@@ -214,7 +214,7 @@ export default function Sidebar({
                   title={`Color ${c}`}
                   className={`size-3.5 rounded-full transition-transform ${
                     color === c
-                      ? "scale-110 ring-2 ring-white/70"
+                      ? "scale-110 ring-2 ring-ink-strong/70"
                       : "hover:scale-110"
                   }`}
                   style={{ backgroundColor: c }}

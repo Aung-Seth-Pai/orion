@@ -143,8 +143,8 @@ export default function ShortcutInput({
           disabled={disabled || saving}
           className={`flex min-w-44 items-center justify-center gap-1.5 rounded px-3 py-1.5 font-mono text-xs transition-colors ${
             recording
-              ? "bg-indigo-500/15 text-indigo-300 ring-1 ring-indigo-500/60"
-              : "bg-zinc-800 text-zinc-200 ring-1 ring-transparent enabled:hover:ring-zinc-700"
+              ? "bg-accent/15 text-accent-ink ring-1 ring-focus/60"
+              : "bg-raised text-ink ring-1 ring-transparent enabled:hover:ring-rule-strong"
           } disabled:cursor-not-allowed disabled:opacity-40`}
         >
           {saving ? (
@@ -163,13 +163,13 @@ export default function ShortcutInput({
           <button
             onClick={stop}
             title="Cancel (Esc)"
-            className="rounded p-1 text-zinc-500 transition-colors hover:text-zinc-300"
+            className="rounded p-1 text-ink-faint transition-colors hover:text-ink-muted"
           >
             <X size={13} />
           </button>
         )}
         {saved && !recording && (
-          <span className="flex items-center gap-1 text-xs text-emerald-400">
+          <span className="flex items-center gap-1 text-xs text-positive-ink">
             <Check size={13} />
             Saved
           </span>
@@ -177,12 +177,12 @@ export default function ShortcutInput({
       </div>
 
       {recording && !error && (
-        <p className="mt-1.5 text-[11px] text-zinc-500">
+        <p className="mt-1.5 text-[11px] text-ink-faint">
           Hold a modifier and press a key. Esc cancels.
         </p>
       )}
       {error && (
-        <p className="mt-1.5 text-[11px] leading-relaxed text-red-400">
+        <p className="mt-1.5 text-[11px] leading-relaxed text-danger-ink">
           {error}
         </p>
       )}
