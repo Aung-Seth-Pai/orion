@@ -1,6 +1,6 @@
 [package]
 name = "orion"
-version = "0.2.1"
+version = "0.3.0"
 description = "Orion - Windows productivity cockpit"
 edition = "2021"
 
