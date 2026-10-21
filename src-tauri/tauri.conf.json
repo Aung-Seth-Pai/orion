@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Orion",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "identifier": "com.identitylabs.orion",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -22,7 +22,8 @@
         "resizable": true,
         "center": true,
         "visible": false,
-        "dragDropEnabled": false
+        "dragDropEnabled": false,
+        "create": false
       },
       {
         "label": "spotlight",
@@ -35,7 +36,8 @@
         "visible": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
-        "dragDropEnabled": false
+        "dragDropEnabled": false,
+        "create": false
       },
       {
         "label": "alert",
@@ -48,7 +50,8 @@
         "visible": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
-        "focus": false
+        "focus": false,
+        "create": false
       }
     ],
     "security": {

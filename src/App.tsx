@@ -229,6 +229,11 @@ function MainShell() {
     setLoading(true);
     getWorkspaces()
       .then((list) => {
+        // A successful load makes any earlier load failure stale. Without this
+        // the banner outlived the problem: a startup error sat there until some
+        // unrelated action happened to clear it, which made a transient failure
+        // look permanent.
+        setError(null);
         setWorkspaces(list);
         setActiveId((current) =>
           current && list.some((w) => w.id === current)

@@ -1,30 +1,23 @@
-Orion v0.2.0 — semantic search, and a round of fixes to the things that got in the way daily.
+Orion v0.2.1 — a fix for new installs. **If you installed v0.2.0, please update.**
 
-## Search by meaning
+## The problem
 
-Type `/ai` in the search window to find things by what they mean rather than what they are called — "deploy my app live" will surface a script named "Ship the release to production".
+On a fresh install, the main window opened empty with a red banner reading *"state not managed for field `db` on command `get_workspaces`"*, and no workspaces appeared. Quick search still found everything, and importing a backup made the banner disappear — which made it look intermittent.
 
-It is **off until you turn it on**, in Settings → AI Search. Enabling it downloads a ~90 MB model once; after that everything runs on your CPU, offline, forever. No text you store or search ever leaves your machine — the only network request is that one download. You can remove the model and clear the index from the same panel whenever you want the space back.
+It was a startup race. Tauri creates the app's windows *before* the setup code that opens the database runs, so on a first launch the interface came up and asked for your workspaces while the database was still being created and migrated. An existing install never hit it, because there is no migration work to do and the database wins the race.
 
-## Fixes
+Windows are now created only after the database is ready, so there is no longer a window in which the question can be asked too early.
 
-- **The window fits your screen now.** On a scaled display the old fixed size could be taller than the usable screen, so the app opened with its edges off-screen. It is now measured against the monitor it opens on, and it remembers the size and position you chose.
-- **Local files can be added as links.** Paste an absolute path — `C:\Users\you\file.pdf`, exactly what Explorer's "Copy as path" gives you — instead of hand-writing a `file://` URL. Pair it with Chrome to open PDFs where you want them.
-- **Timer notifications you can actually see.** Windows can accept a notification and still never show the banner, with no way for an app to tell. Orion now shows its own small bar in the corner, which no notification setting can suppress.
-- **The version in the corner is real.** It was hardcoded and had drifted; it now reads from the build.
+Two smaller fixes came out of the same investigation:
 
-## Additions
-
-- **Drag to reorder** workspaces, resources and scripts. The order is yours, it survives restarts, and it is preserved through export and import.
-- **Click a resource to copy** its link or path, without launching it.
-- **Rebind the global shortcut.** `Ctrl+Shift+O` is only the default now. If a combination is already taken by another app, Orion says so and keeps the one that works.
-- **Duplicate detection while adding a resource.** As you type a name, Orion shows anything similar you already saved — across *all* your workspaces, since that is exactly when you would not remember. Paste a target you already have and it tells you where it lives.
+- An error banner could outlive the problem that caused it. A successful load now clears it, instead of leaving a stale message until some unrelated action happened to reset it.
+- When another application already owns `Ctrl+Shift+O`, Orion logged an alarming error and tried to claim the same combination a second time. It now says so once, calmly, and you can set a different shortcut in Settings.
 
 ## Upgrading
 
-Your database migrates automatically the first time you launch; nothing to do. Semantic search stays off until you enable it.
+Install over your existing copy. Your data is untouched, and nothing needs to be re-done — if you were already running v0.2.0 successfully, you were never affected by this.
 
-One thing worth knowing: **importing a backup clears the AI index**, because an import replaces the whole database. If you use `/ai`, rebuild the index afterwards in Settings → AI Search. Orion will tell you if you forget.
+Everything in [v0.2.0](../../releases/tag/v0.2.0) — semantic search, drag to reorder, local file links, the rebindable shortcut, duplicate detection — is unchanged.
 
 ---
 

@@ -203,6 +203,28 @@ pub fn run() {
             };
             app.manage(database);
             app.manage(PendingAlert::default());
+
+            // Windows are created HERE, by hand, rather than by Tauri before
+            // this hook runs.
+            //
+            // Tauri's own setup builds every window declared in the config and
+            // only then calls this closure, so on a fresh install the main
+            // window's webview was up and invoking `get_workspaces` while
+            // `Db::initialize` was still creating the database, running the
+            // migrations and building the vec_items table — and the command
+            // failed with "state not managed for field `db`". An existing
+            // install never showed it because the migrations are a no-op and
+            // Rust won the race. Every window is `"create": false` in the
+            // config so that nothing can call a command before the line above.
+            let window_configs = app.config().app.windows.clone();
+            for window_config in &window_configs {
+                tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?.build()?;
+            }
+            log::info!(
+                "Database ready and state managed; {} windows created",
+                window_configs.len()
+            );
+
             tray::setup_tray(app.handle())?;
 
             // Independently of the denylist above: the alert window must never
@@ -216,12 +238,22 @@ pub fn run() {
             // another application claims it, so fall back rather than start with
             // no way to open Spotlight at all.
             if let Err(e) = tray::apply_spotlight_shortcut(app.handle(), &shortcut) {
-                log::warn!("{e} — falling back to {}", tray::DEFAULT_SPOTLIGHT_SHORTCUT);
-                if let Err(fallback) = tray::apply_spotlight_shortcut(
-                    app.handle(),
-                    tray::DEFAULT_SPOTLIGHT_SHORTCUT,
-                ) {
-                    log::error!("No spotlight shortcut could be registered: {fallback}");
+                // Only worth retrying with something different. When the stored
+                // accelerator IS the default, re-registering it is a guaranteed
+                // second failure, and logging that as an error made a normal
+                // situation — another app owning the combination — look broken.
+                if shortcut == tray::DEFAULT_SPOTLIGHT_SHORTCUT {
+                    log::warn!("{e} Spotlight has no shortcut; set another in Settings.");
+                } else {
+                    log::warn!("{e} — falling back to {}", tray::DEFAULT_SPOTLIGHT_SHORTCUT);
+                    if let Err(fallback) = tray::apply_spotlight_shortcut(
+                        app.handle(),
+                        tray::DEFAULT_SPOTLIGHT_SHORTCUT,
+                    ) {
+                        log::warn!(
+                            "{fallback} Spotlight has no shortcut; set another in Settings."
+                        );
+                    }
                 }
             }
             // After the window-state plugin has restored last run's geometry,
