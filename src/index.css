@@ -30,6 +30,7 @@
   --color-accent-bright: var(--accent-bright);
   --color-accent-ink: var(--accent-ink);
   --color-accent-soft: var(--accent-soft);
+  --color-accent-on: var(--accent-on);
   --color-focus: var(--focus);
 
   --color-positive: var(--positive);

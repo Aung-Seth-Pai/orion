@@ -138,9 +138,9 @@ export default function Spotlight() {
   }
 
   return (
-    <div className="flex h-full flex-col rounded-xl border border-zinc-700/70 bg-zinc-900/90 shadow-2xl shadow-black/60 backdrop-blur-xl">
-      <div className="flex items-center gap-3 border-b border-zinc-800 px-4">
-        <Search size={18} className="shrink-0 text-zinc-500" />
+    <div className="flex h-full flex-col rounded-xl border border-rule-strong/70 bg-surface/90 shadow-2xl shadow-black/60 backdrop-blur-xl">
+      <div className="flex items-center gap-3 border-b border-rule px-4">
+        <Search size={18} className="shrink-0 text-ink-faint" />
         <input
           ref={inputRef}
           value={query}
@@ -148,20 +148,20 @@ export default function Spotlight() {
           onKeyDown={onKeyDown}
           maxLength={100}
           placeholder="Search workspaces, links, folders, scripts…"
-          className="h-14 w-full bg-transparent text-[15px] text-zinc-100 placeholder-zinc-500 outline-none"
+          className="h-14 w-full bg-transparent text-[15px] text-ink-strong placeholder-ink-faint outline-none"
         />
-        <kbd className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500">
+        <kbd className="shrink-0 rounded bg-raised px-1.5 py-0.5 text-[10px] text-ink-faint">
           Esc
         </kbd>
       </div>
 
-      <div className="px-4 pt-1.5 text-[10px] text-zinc-600">
+      <div className="px-4 pt-1.5 text-[10px] text-ink-faint">
         Tip: Filter results using /ws, /link, /folder, /script, or /ai
       </div>
 
       <ul ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-2 pt-1">
         {results.length === 0 ? (
-          <li className="px-3 py-6 text-center text-xs text-zinc-600">
+          <li className="px-3 py-6 text-center text-xs text-ink-faint">
             {query.trim()
               ? loading
                 ? "Searching…"
@@ -178,22 +178,22 @@ export default function Spotlight() {
                   onClick={() => void execute(item)}
                   className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors cursor-default ${
                     index === selected
-                      ? "bg-indigo-500/20 ring-1 ring-indigo-500/40"
-                      : "hover:bg-zinc-800/60"
+                      ? "bg-accent/20 ring-1 ring-accent/40"
+                      : "hover:bg-raised/60"
                   }`}
                 >
-                  <span className="flex size-7 shrink-0 items-center justify-center rounded bg-zinc-800 text-zinc-400">
+                  <span className="flex size-7 shrink-0 items-center justify-center rounded bg-raised text-ink-muted">
                     <Icon size={14} />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] font-medium text-zinc-200">
+                    <span className="block truncate text-[13px] font-medium text-ink">
                       {item.title}
                     </span>
-                    <span className="block truncate text-[11px] text-zinc-500">
+                    <span className="block truncate text-[11px] text-ink-faint">
                       {item.subtitle}
                     </span>
                   </span>
-                  <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-zinc-500">
+                  <span className="shrink-0 rounded bg-raised px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-ink-faint">
                     {item.itemType}
                   </span>
                 </button>
@@ -203,7 +203,7 @@ export default function Spotlight() {
         )}
       </ul>
 
-      <div className="flex items-center gap-3 border-t border-zinc-800 px-4 py-1.5 text-[10px] text-zinc-600">
+      <div className="flex items-center gap-3 border-t border-rule px-4 py-1.5 text-[10px] text-ink-faint">
         <span>↑↓ navigate</span>
         <span>↵ open</span>
         <span>esc dismiss</span>

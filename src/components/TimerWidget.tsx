@@ -36,12 +36,12 @@ export default function TimerWidget({
         : formatTime(Math.max(pomodoroSeconds - elapsed, 0));
 
   return (
-    <div className="flex items-center gap-1.5 rounded-md bg-zinc-800/70 px-2 py-1 ring-1 ring-zinc-700/50">
+    <div className="flex items-center gap-1.5 rounded-md bg-raised/70 px-2 py-1 ring-1 ring-rule-strong/50">
       <TimerIcon
         size={13}
-        className={running ? "text-emerald-400" : "text-zinc-500"}
+        className={running ? "text-positive-ink" : "text-ink-faint"}
       />
-      <div className="flex overflow-hidden rounded ring-1 ring-zinc-700">
+      <div className="flex overflow-hidden rounded ring-1 ring-rule-strong">
         {(["stopwatch", "pomodoro"] as SessionType[]).map((m) => (
           <button
             key={m}
@@ -54,22 +54,22 @@ export default function TimerWidget({
             }
             className={`px-1.5 py-0.5 text-[10px] font-medium transition-colors disabled:cursor-not-allowed ${
               mode === m
-                ? "bg-zinc-600 text-zinc-100"
-                : "bg-transparent text-zinc-500 hover:text-zinc-300"
+                ? "bg-raised-hover text-ink-strong"
+                : "bg-transparent text-ink-faint hover:text-ink-muted"
             }`}
           >
             {m === "stopwatch" ? "SW" : `${Math.round(pomodoroSeconds / 60)}m`}
           </button>
         ))}
       </div>
-      <span className="min-w-[3.5rem] text-center font-mono text-xs tabular-nums text-zinc-200">
+      <span className="min-w-[3.5rem] text-center font-mono text-xs tabular-nums text-ink">
         {display}
       </span>
       {running ? (
         <button
           onClick={onStop}
           title="Stop and log session"
-          className="rounded p-1 text-red-400 transition-colors hover:bg-red-500/10"
+          className="rounded p-1 text-danger-ink transition-colors hover:bg-danger/10"
         >
           <Square size={11} />
         </button>
@@ -83,8 +83,8 @@ export default function TimerWidget({
           }
           className={`rounded p-1 transition-colors ${
             phase === "done"
-              ? "text-emerald-400 hover:bg-emerald-500/20"
-              : "text-emerald-400 hover:bg-emerald-500/10"
+              ? "text-positive-ink hover:bg-positive/20"
+              : "text-positive-ink hover:bg-positive/10"
           }`}
         >
           <Play size={11} />

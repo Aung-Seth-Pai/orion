@@ -85,15 +85,15 @@ export default function TimerAlert() {
     <div
       onClick={dismiss}
       title="Click to dismiss"
-      className="group flex h-full w-full cursor-default items-center gap-2.5 rounded-lg border border-zinc-700/80 bg-zinc-900/95 px-3 shadow-lg shadow-black/50 backdrop-blur"
+      className="group flex h-full w-full cursor-default items-center gap-2.5 rounded-lg border border-rule-strong/80 bg-surface/95 px-3 shadow-lg shadow-black/50 backdrop-blur"
     >
-      <CheckCircle2 size={15} className="shrink-0 text-emerald-400" />
+      <CheckCircle2 size={15} className="shrink-0 text-positive-ink" />
 
       <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
-        <span className="shrink-0 text-xs font-semibold text-zinc-100">
+        <span className="shrink-0 text-xs font-semibold text-ink-strong">
           {alert.title}
         </span>
-        <span className="truncate text-[11px] text-zinc-400">{alert.body}</span>
+        <span className="truncate text-[11px] text-ink-muted">{alert.body}</span>
       </div>
 
       <span
@@ -104,7 +104,7 @@ export default function TimerAlert() {
           dismiss();
         }}
         title="Dismiss"
-        className="shrink-0 rounded p-0.5 text-zinc-600 opacity-0 transition-opacity group-hover:opacity-100 hover:text-zinc-300"
+        className="shrink-0 rounded p-0.5 text-ink-ghost opacity-0 transition-opacity group-hover:opacity-100 hover:text-ink-muted"
       >
         <X size={13} />
       </span>

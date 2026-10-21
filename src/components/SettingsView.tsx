@@ -24,6 +24,7 @@ import {
 import { getAiStatus, reindexAll, removeAiModel } from "../api/ai";
 import ShortcutInput from "./ShortcutInput";
 import type { AiStatus } from "../types";
+import ThemePicker from "./ThemePicker";
 
 const LAUNCH_ON_STARTUP_KEY = "launch_on_startup";
 const DEFAULT_IDE_KEY = "default_ide";
@@ -451,6 +452,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
         <div className="max-w-xl">
           {tab === "general" && (
             <div className="space-y-2">
+              <ThemePicker onError={onError} />
               <div className="flex items-center gap-4 rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
                 <div className="min-w-0 flex-1">
                   <p className="text-[13px] font-medium text-zinc-200">

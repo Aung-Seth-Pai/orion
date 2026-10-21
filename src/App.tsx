@@ -12,6 +12,11 @@ import { useAppVersion } from "./utils/version";
 import { logTimerSession } from "./api/timers";
 import { getSettings } from "./api/settings";
 import {
+  applyTheme,
+  isThemeId,
+  THEME_SETTING_KEY,
+} from "./utils/theme";
+import {
   createWorkspace,
   deleteWorkspace,
   getWorkspaces,
@@ -72,6 +77,14 @@ function MainShell() {
         if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 180) {
           setPomodoroMinutes(parsed);
         }
+
+        // The theme was already painted from the localStorage cache before
+        // React mounted. This reconciles it with the stored value, which
+        // matters after importing a backup made on another machine. An absent
+        // or unrecognised value leaves the cached theme alone rather than
+        // yanking the user back to the default.
+        const storedTheme = s[THEME_SETTING_KEY];
+        if (isThemeId(storedTheme)) applyTheme(storedTheme);
       })
       .catch(() => {});
   }, []);
@@ -350,7 +363,7 @@ function MainShell() {
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {loading ? (
-            <p className="pt-8 text-center text-sm text-zinc-600">Loading…</p>
+            <p className="pt-8 text-center text-sm text-ink-faint">Loading…</p>
           ) : settingsOpen ? (
             <SettingsView onError={setError} onDataReplaced={handleDataReplaced} />
           ) : active ? (
@@ -364,11 +377,11 @@ function MainShell() {
             <div className="flex flex-1 items-center justify-center">
               <div className="flex flex-col items-center gap-3 text-center">
                 {workspaces.length > 0 ? (
-                  <SettingsIcon size={28} className="text-zinc-700" />
+                  <SettingsIcon size={28} className="text-ink-ghost" />
                 ) : (
-                  <Rocket size={28} className="text-zinc-700" />
+                  <Rocket size={28} className="text-ink-ghost" />
                 )}
-                <p className="text-sm text-zinc-500">
+                <p className="text-sm text-ink-faint">
                   {workspaces.length > 0
                     ? "Select a workspace to begin"
                     : "Create your first workspace to begin"}
@@ -378,7 +391,7 @@ function MainShell() {
           )}
         </div>
 
-        <div className="flex h-7 items-center border-t border-zinc-800/80 px-3 text-[10px] text-zinc-600">
+        <div className="flex h-7 items-center border-t border-rule/80 px-3 text-[10px] text-ink-faint">
           <span>{appVersion ? `Orion v${appVersion}` : "Orion"}</span>
           <span className="ml-auto">{workspaces.length} workspace(s)</span>
         </div>
@@ -387,10 +400,10 @@ function MainShell() {
       {toast && (
         <div
           key={toast.id}
-          className="fixed bottom-10 right-4 z-50 flex items-center gap-2 rounded-lg border border-emerald-500/40 bg-zinc-900/95 px-3.5 py-2.5 shadow-2xl shadow-black/50 backdrop-blur"
+          className="fixed bottom-10 right-4 z-50 flex items-center gap-2 rounded-lg border border-positive/40 bg-surface/95 px-3.5 py-2.5 shadow-2xl shadow-black/50 backdrop-blur"
         >
           <CheckCircle2 size={15} className="shrink-0 text-emerald-400" />
-          <span className="text-xs leading-snug text-zinc-200">
+          <span className="text-xs leading-snug text-ink">
             {toast.message}
           </span>
         </div>

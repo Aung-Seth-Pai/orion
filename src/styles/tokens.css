@@ -15,7 +15,16 @@
 
    The selector is [data-theme] rather than :root[data-theme] on purpose — the
    design lab puts several themes on one page by setting the attribute on
-   wrapper elements.
+   wrapper elements, and so does the theme picker's preview swatch.
+
+   ONE CAVEAT when nesting a theme inside the app: read the tokens below
+   directly as var(--accent), NOT through a Tailwind utility like bg-accent.
+   The utilities go through aliases declared once at :root as
+   --color-accent: var(--accent); CSS resolves that indirection at :root and
+   descendants inherit the finished value, so a nested data-theme has no effect
+   on them. A raw var() is substituted on the element that uses it, where the
+   nested attribute is in force. This does not affect normal use, where
+   data-theme sits on <html> and :root is the themed element.
    ────────────────────────────────────────────────────────────────────────── */
 
 :root,
@@ -45,6 +54,10 @@
   --accent-soft: rgba(99, 102, 241, 0.14);
   --focus: #6366f1;
   --selection: rgba(99, 102, 241, 0.35);
+  /* Text and icons placed ON an accent fill. Not derivable from --accent: the
+     first three accents are mid-tones that need white on them, while Almanac's
+     accent is near-white and would render a white label invisible. */
+  --accent-on: #ffffff;
 
   /* ── Signals. The -ink variants are the legible-on-dark text versions; the
         bare token is for fills and borders. ─────────────────────────────── */
@@ -115,6 +128,7 @@
   --accent-ink: #afc9f0;
   --accent-soft: rgba(124, 166, 224, 0.14);
   --selection: rgba(124, 166, 224, 0.32);
+  --accent-on: #0a0c10;
   --focus: #7ca6e0;
 
   --positive: #46c68f;
@@ -155,6 +169,7 @@
   --accent-ink: #e8a878;
   --accent-soft: rgba(208, 124, 67, 0.14);
   --selection: rgba(208, 124, 67, 0.32);
+  --accent-on: #14110f;
   --focus: #d07c43;
 
   --positive: #7d9d63;
@@ -212,6 +227,7 @@
   --accent-ink: #ebeae6;
   --accent-soft: rgba(255, 255, 255, 0.07);
   --selection: rgba(255, 255, 255, 0.18);
+  --accent-on: #0b0d11;
   --focus: #ebeae6;
 
   --positive: #86a894;
