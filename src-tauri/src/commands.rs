@@ -4033,7 +4033,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn parses_search_scopes() {
         assert_eq!(
             parse_search_scope("github"),

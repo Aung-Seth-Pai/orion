@@ -65,6 +65,8 @@ jobs:
         working-directory: src-tauri
         run: cargo test --lib --target ${{ matrix.target }}
 
+      # --all-targets so test code is linted too. It caught a duplicated
+      # #[test] attribute that was silently running one test twice.
       - name: Lint the backend
         working-directory: src-tauri
-        run: cargo clippy --lib --target ${{ matrix.target }} -- -D warnings
+        run: cargo clippy --lib --all-targets --target ${{ matrix.target }} -- -D warnings
