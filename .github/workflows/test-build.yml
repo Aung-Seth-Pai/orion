@@ -1,0 +1,94 @@
+name: Test build
+
+# Produces an installable build without cutting a release.
+#
+# `release.yml` publishes a live release and `latest.json` the moment a tag is
+# pushed, which means existing users are offered the update immediately. That is
+# the wrong instrument for "I want to try this on a machine". This workflow
+# builds the same bundles and leaves them as a downloadable artifact instead:
+# no tag, no release, no updater, nothing visible to anyone who has the app.
+#
+# Run it from the Actions tab -> Test build -> Run workflow, and pick which
+# platform to build.
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Which platform to build
+        type: choice
+        default: macos
+        options: [macos, windows, both]
+
+jobs:
+  # The matrix is built here rather than filtered with a job-level `if`,
+  # because the `matrix` context is not available to one -- the condition
+  # would read as empty and silently skip every job.
+  choose:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          mac='{"platform":"macos-15","target":"aarch64-apple-darwin","name":"macos"}'
+          win='{"platform":"windows-latest","target":"x86_64-pc-windows-msvc","name":"windows"}'
+          case "${{ inputs.platform }}" in
+            macos)   include="[$mac]" ;;
+            windows) include="[$win]" ;;
+            *)       include="[$mac,$win]" ;;
+          esac
+          echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: choose
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.choose.outputs.matrix) }}
+    runs-on: ${{ matrix.platform }}
+    name: ${{ matrix.target }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # No tagName, so tauri-action builds and stops -- it creates no release.
+      - name: Build the app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # Same ad-hoc signature the real release uses. Without it the arm64
+          # kernel refuses to execute the binary at all, so a test build without
+          # it would fail to launch for a reason the real build would not have.
+          APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos-15' && '-' || '' }}
+        with:
+          args: --target ${{ matrix.target }}
+
+      # The .app itself is not uploaded: GitHub zips artifacts, and a zip does
+      # not preserve the symlinks inside a macOS bundle. The .dmg survives
+      # because it is a single file.
+      - name: Collect the installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: orion-${{ matrix.name }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
