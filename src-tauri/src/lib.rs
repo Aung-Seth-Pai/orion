@@ -5,16 +5,20 @@ mod alert;
 mod commands;
 mod db;
 mod models;
+/// Every OS-specific behaviour in the app. See `platform/mod.rs` for the rule
+/// the rest of the crate follows: no other module's production code carries a
+/// `cfg(target_os)`.
+pub mod platform;
 mod tray;
 
-use std::path::PathBuf;
 
 use commands::{
     create_resource, create_script, create_task, create_workspace, delete_env_var, delete_resource,
     delete_script, delete_task, delete_workspace, execute_script, export_all_data,
     find_resource_by_target, get_ai_status,
     get_env_vars, get_resources, get_scripts, get_settings, get_tasks,
-    get_all_workspace_times, get_workspace_time, get_workspaces, import_data, launch_resource,
+    get_all_workspace_times, get_platform_info, get_workspace_time, get_workspaces, import_data,
+    launch_resource,
     log_timer_session,
     notify_timer_complete, open_log_folder, reindex_all, reorder_resources, reorder_scripts,
     remove_ai_model, reorder_workspaces, reset_workspace_time, search_all,
@@ -43,10 +47,7 @@ fn migrate_legacy_database(app: &AppHandle) {
         return;
     }
 
-    let Some(legacy_dir) = std::env::var("APPDATA")
-        .ok()
-        .map(|appdata| PathBuf::from(appdata).join("com.orion.cockpit"))
-    else {
+    let Some(legacy_dir) = platform::legacy_data_dir() else {
         return;
     };
 
@@ -300,6 +301,7 @@ pub fn run() {
             update_setting,
             export_all_data,
             import_data,
+            get_platform_info,
             get_tasks,
             create_task,
             update_task_status,

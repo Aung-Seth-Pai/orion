@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+
+import { displayAccelerator } from "../utils/platform";
 import { Check, Keyboard, Loader2, X } from "lucide-react";
 
 /** Modifier-only presses, which are never a shortcut on their own. */
@@ -35,10 +37,7 @@ function toAccelerator(e: React.KeyboardEvent): string | null {
 
 /** Renders `CmdOrCtrl+Shift+O` as something readable on this platform. */
 function prettify(accelerator: string): string {
-  return accelerator
-    .split("+")
-    .map((part) => (part === "CmdOrCtrl" ? "Ctrl" : part))
-    .join(" + ");
+  return displayAccelerator(accelerator, " + ");
 }
 
 interface ShortcutInputProps {

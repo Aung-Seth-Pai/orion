@@ -35,7 +35,8 @@ const MIGRATIONS: &[&str] = &[
         id TEXT PRIMARY KEY,
         workspace_id TEXT,
         title TEXT NOT NULL,
-        script_type TEXT NOT NULL CHECK(script_type IN ('powershell', 'cmd', 'python', 'node', 'wsl_bash')),
+        -- Deliberately unconstrained; see the version 3 migration for why.
+        script_type TEXT NOT NULL,
         script_content TEXT NOT NULL,
         sort_order INTEGER DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -86,7 +87,7 @@ const MIGRATIONS: &[&str] = &[
 /// matching block in [`apply_versioned_migrations`] whenever an existing
 /// database needs altering — the base `MIGRATIONS` batch above only ever runs
 /// `CREATE TABLE IF NOT EXISTS`, so it cannot change a table that already exists.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// Vector index backing semantic search. `sqlite-vec` stores the embeddings in
 /// shadow tables inside the same `data.db` file, so a backup of that one file
@@ -177,6 +178,55 @@ fn apply_versioned_migrations(conn: &Connection) -> Result<(), Box<dyn std::erro
         ))
         .map_err(|e| format!("migration to schema version 2 failed: {e}"))?;
         log::info!("Database migrated to schema version 2 (vec_items vector index)");
+    }
+
+    if version < 3 {
+        // Drops the CHECK constraint on automation_scripts.script_type.
+        //
+        // The constraint listed the five Windows script types. Adding macOS's
+        // shell types needs it changed, and SQLite cannot alter a CHECK — only
+        // rebuild the table. Given that we are rebuilding anyway, the better
+        // end state is no constraint at all rather than a longer list.
+        //
+        // The list duplicates Rust's `platform::ALL_SCRIPT_TYPES`, which is
+        // where every write path already validates, so it buys no real safety.
+        // What it costs is concrete: a backup written by a build that knows a
+        // type this build does not — a macOS export opened on an older Windows
+        // install, say — would fail the CHECK and abort the *whole* import
+        // transaction, losing workspaces and resources over a script type.
+        // Imports are deliberately permissive so a setup survives the crossing
+        // intact; a schema constraint that contradicts that is the wrong layer
+        // to be strict in.
+        //
+        // Wrapped in an explicit transaction because this one is not idempotent
+        // the way an ALTER is: interrupted between the DROP and the RENAME it
+        // would leave no table at all, and the retry on next launch would fail.
+        // No foreign_keys pragma juggling is needed — nothing references
+        // automation_scripts, and the rebuilt table keeps the same outgoing key
+        // to workspaces, so the copy cannot introduce a violation.
+        conn.execute_batch(
+            "BEGIN IMMEDIATE;
+             CREATE TABLE automation_scripts_v3 (
+                 id TEXT PRIMARY KEY,
+                 workspace_id TEXT,
+                 title TEXT NOT NULL,
+                 script_type TEXT NOT NULL,
+                 script_content TEXT NOT NULL,
+                 sort_order INTEGER DEFAULT 0,
+                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                 FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+             );
+             INSERT INTO automation_scripts_v3
+                 (id, workspace_id, title, script_type, script_content, sort_order, created_at)
+             SELECT id, workspace_id, title, script_type, script_content, sort_order, created_at
+             FROM automation_scripts;
+             DROP TABLE automation_scripts;
+             ALTER TABLE automation_scripts_v3 RENAME TO automation_scripts;
+             PRAGMA user_version = 3;
+             COMMIT;",
+        )
+        .map_err(|e| format!("migration to schema version 3 failed: {e}"))?;
+        log::info!("Database migrated to schema version 3 (script_type CHECK removed)");
     }
 
     Ok(())
@@ -306,6 +356,108 @@ mod tests {
         assert_eq!(reset_at, 0, "existing workspaces count all logged time");
 
         // Re-running must not attempt the ALTER a second time.
+        apply_versioned_migrations(&conn).unwrap();
+        assert_eq!(schema_version(&conn), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn dropping_the_script_type_check_keeps_every_script() {
+        let conn = test_conn();
+
+        // A version-2 database as the Windows build left it, including the
+        // CHECK constraint the migration has to get rid of.
+        conn.execute_batch(
+            "CREATE TABLE workspaces (
+                 id TEXT PRIMARY KEY,
+                 name TEXT NOT NULL,
+                 color TEXT,
+                 icon TEXT,
+                 sort_order INTEGER DEFAULT 0,
+                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                 timer_reset_at INTEGER DEFAULT 0
+             );
+             CREATE TABLE automation_scripts (
+                 id TEXT PRIMARY KEY,
+                 workspace_id TEXT,
+                 title TEXT NOT NULL,
+                 script_type TEXT NOT NULL CHECK(script_type IN
+                     ('powershell', 'cmd', 'python', 'node', 'wsl_bash')),
+                 script_content TEXT NOT NULL,
+                 sort_order INTEGER DEFAULT 0,
+                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                 FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+             );
+             INSERT INTO workspaces (id, name) VALUES ('w1', 'Payments');
+             INSERT INTO automation_scripts
+                 (id, workspace_id, title, script_type, script_content, sort_order)
+             VALUES
+                 ('s1', 'w1', 'Deploy', 'powershell', 'Write-Host hi', 2),
+                 ('s2', NULL, 'Tidy', 'python', 'print(1)', 0);
+             PRAGMA user_version = 2;",
+        )
+        .unwrap();
+
+        apply_versioned_migrations(&conn).unwrap();
+        assert_eq!(schema_version(&conn), SCHEMA_VERSION);
+
+        // Every column survives the rebuild, global scripts (NULL workspace)
+        // included — they are the easy ones to lose to a careless copy.
+        let rows: Vec<(String, Option<String>, String, String, i64)> = conn
+            .prepare(
+                "SELECT id, workspace_id, script_type, script_content, sort_order
+                 FROM automation_scripts ORDER BY id",
+            )
+            .unwrap()
+            .query_map([], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "s1".to_string(),
+                    Some("w1".to_string()),
+                    "powershell".to_string(),
+                    "Write-Host hi".to_string(),
+                    2
+                ),
+                (
+                    "s2".to_string(),
+                    None,
+                    "python".to_string(),
+                    "print(1)".to_string(),
+                    0
+                ),
+            ]
+        );
+
+        // The point of the migration: a type the old constraint rejected now
+        // stores. This is what lets a macOS export import on Windows, and a
+        // zsh script exist at all.
+        conn.execute(
+            "INSERT INTO automation_scripts (id, title, script_type, script_content)
+             VALUES ('s3', 'Mac tidy', 'zsh', 'echo hi')",
+            [],
+        )
+        .expect("the script_type CHECK must be gone");
+
+        // The foreign key must survive the rebuild, or deleting a workspace
+        // would start orphaning its scripts.
+        conn.execute("DELETE FROM workspaces WHERE id = 'w1'", [])
+            .unwrap();
+        let remaining: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM automation_scripts WHERE workspace_id = 'w1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 0, "ON DELETE CASCADE was lost in the rebuild");
+
+        // Re-running must not rebuild a second time.
         apply_versioned_migrations(&conn).unwrap();
         assert_eq!(schema_version(&conn), SCHEMA_VERSION);
     }

@@ -24,7 +24,18 @@ export interface WorkspacePatch {
 
 export type ResourceType = "link" | "folder";
 
-export type PreferredApp = "default" | "chrome" | "edge" | "firefox";
+/**
+ * Every browser preference Orion can STORE. As with `ScriptType`, this is wider
+ * than what any one platform offers, so a resource set naming Safari survives a
+ * trip through a Windows install; `utils/platform` says which are available
+ * here, and the launcher falls back to the system default for the rest.
+ */
+export type PreferredApp =
+  | "default"
+  | "safari"
+  | "chrome"
+  | "edge"
+  | "firefox";
 
 export interface Resource {
   id: string;
@@ -55,7 +66,20 @@ export interface ResourcePatch {
   profileName?: string | null;
 }
 
-export type ScriptType = "powershell" | "cmd" | "python" | "node" | "wsl_bash";
+/**
+ * Every script type Orion can STORE, not only the ones the current machine can
+ * run. A setup imported from the other platform keeps its scripts, so the type
+ * union has to cover both; `utils/platform` says which of them are runnable
+ * here.
+ */
+export type ScriptType =
+  | "powershell"
+  | "cmd"
+  | "python"
+  | "node"
+  | "wsl_bash"
+  | "zsh"
+  | "bash";
 
 export interface AutomationScript {
   id: string;

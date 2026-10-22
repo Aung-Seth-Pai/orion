@@ -154,6 +154,64 @@ pub struct BackupPayload {
     pub workspace_env_vars: Vec<EnvVar>,
 }
 
+/// Everything the frontend needs to know about the host platform, fetched once
+/// at startup.
+///
+/// One command rather than a set of `cfg`-like checks in TypeScript, and
+/// preferred over `tauri-plugin-os` because the answers are not really about
+/// the OS — they are about what *this build of Orion* can do on it. Keeping
+/// them in Rust means the dropdown and the launcher cannot disagree about which
+/// script types are runnable, which is exactly the bug that would be invisible
+/// until someone pressed Run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformInfo {
+    /// `"windows"` or `"macos"`.
+    pub os: String,
+    /// Script types this machine can execute, in the order to offer them.
+    pub runnable_script_types: Vec<String>,
+    /// Every script type Orion can store, so the UI can label an inert one.
+    pub all_script_types: Vec<String>,
+    /// `preferred_app` values with a launcher on this platform.
+    pub browsers: Vec<String>,
+    /// "Windows Terminal" / "Terminal".
+    pub terminal_label: String,
+    /// "Explorer" / "Finder".
+    pub file_manager_label: String,
+    /// `"\\"` or `"/"`, for displaying stored paths the way the user typed them.
+    pub path_separator: String,
+}
+
+/// What an import actually brought in, so the UI can say so rather than just
+/// "Done".
+///
+/// The counts are there to make a replacement import legible — it wipes
+/// everything first, so "imported 4 workspaces" is the difference between
+/// confidence and a quiet sense that something may have gone missing.
+///
+/// `unrunnable_scripts` is the part that matters across platforms. A setup
+/// exported on Windows keeps its PowerShell scripts when imported on a Mac;
+/// they are simply inert there. Saying nothing would leave the user to discover
+/// that one script at a time, each time looking like a bug.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportSummary {
+    pub workspaces: usize,
+    pub resources: usize,
+    pub scripts: usize,
+    pub timer_logs: usize,
+    pub tasks: usize,
+    pub env_vars: usize,
+    /// Titles of the scripts that cannot run on this platform, capped so a
+    /// pathological backup cannot turn into a wall of text.
+    pub unrunnable_scripts: Vec<String>,
+    /// How many there were in total, which may exceed the titles listed.
+    pub unrunnable_count: usize,
+    /// The script types involved, deduplicated and labelled for display
+    /// ("PowerShell", "WSL bash") rather than as stored ids.
+    pub unrunnable_types: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {

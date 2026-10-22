@@ -1,0 +1,72 @@
+name: CI
+
+# The point of this workflow is to stop the macOS build rotting between
+# releases. Orion is developed on Windows, so without a macOS job the first
+# sign of a broken port would be a failed release — by which time the tag is
+# already pushed. Running both platforms on every push and PR makes a Windows-
+# only assumption fail in the pull request that introduces it.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+          # macos-15 runners are Apple Silicon. Pinned rather than -latest so
+          # the architecture cannot change under us without a visible edit.
+          - platform: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.platform }}
+    name: ${{ matrix.target }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: clippy
+
+      # candle and gemm dominate the build; without a cache every run pays for
+      # them again.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Typecheck and test the frontend
+        run: |
+          npx tsc --noEmit
+          npm test
+
+      # Compiles the lib and its tests for this target, which is what catches a
+      # platform assumption. Deliberately not a full `tauri build`: bundling adds
+      # several minutes and proves nothing extra about the code.
+      - name: Test the backend
+        working-directory: src-tauri
+        run: cargo test --lib --target ${{ matrix.target }}
+
+      # --all-targets so test code is linted too. It caught a duplicated
+      # #[test] attribute that was silently running one test twice.
+      - name: Lint the backend
+        working-directory: src-tauri
+        run: cargo clippy --lib --all-targets --target ${{ matrix.target }} -- -D warnings

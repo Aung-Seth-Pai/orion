@@ -8,10 +8,10 @@ import type { AlertPayload } from "../types";
 const AUTO_DISMISS_MS = 8_000;
 
 /**
- * Orion's own timer notification: a compact bar parked where Windows puts its
+ * Orion's own timer notification: a compact bar parked where the OS puts its
  * toasts.
  *
- * It exists because a Windows toast can be delivered and still never appear —
+ * It exists because a system notification can be delivered and never appear —
  * suppressed by Focus Assist or a per-app setting, with no way for the app to
  * detect it. A window Orion owns cannot be suppressed that way.
  *

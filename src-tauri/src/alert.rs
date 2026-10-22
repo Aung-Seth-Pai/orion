@@ -1,10 +1,12 @@
 //! The timer alert window.
 //!
-//! Windows toasts are not a dependable way to tell someone their pomodoro
+//! System toasts are not a dependable way to tell someone their pomodoro
 //! finished. They can be delivered and still never appear as a banner — routed
-//! straight to the notification centre by Focus Assist, by a per-app setting,
-//! or by policy — and the app has no way to know that happened. The symptom is
-//! exactly what it looks like from the outside: a faint sound and no pop-up.
+//! straight to the notification centre by Focus Assist or Do Not Disturb, by a
+//! per-app setting, or by policy — and the app has no way to know that
+//! happened. On macOS an unsigned build may not be allowed to post one at all.
+//! The symptom is the same in every case, and is exactly what it looks like
+//! from the outside: a faint sound and no pop-up.
 //!
 //! So the visible notification is Orion's own: a small frameless always-on-top
 //! window it owns outright, which cannot be suppressed by notification
@@ -38,16 +40,18 @@ pub struct PendingAlert(pub Mutex<Option<AlertPayload>>);
 const ALERT_WINDOW: &str = "alert";
 const MAX_ALERT_CHARS: usize = 200;
 
-/// Parks the alert in the bottom-right of the work area, where Windows puts its
-/// own toasts, instead of wherever the window happened to be created.
+/// Parks the alert in the corner the host platform puts its own notifications
+/// in, instead of wherever the window happened to be created — bottom-right
+/// above the Windows taskbar, top-right below the macOS menu bar.
 ///
 /// Positioned on every show rather than once, because the monitor it should
 /// appear on can change between alerts and the work area moves with the
-/// taskbar. Physical pixels throughout, which is what both `work_area` and
-/// `outer_size` report.
-fn park_bottom_right(window: &tauri::WebviewWindow) {
-    /// Gap from the screen edges, in logical pixels, matching the inset Windows
-    /// leaves around its own notifications.
+/// taskbar or the Dock. Physical pixels throughout, which is what both
+/// `work_area` and `outer_size` report; `work_area` already excludes the
+/// menu bar and the Dock, so no platform arithmetic is needed here.
+fn park_in_notification_corner(window: &tauri::WebviewWindow) {
+    /// Gap from the screen edges, in logical pixels, matching the inset both
+    /// systems leave around their own notifications.
     const MARGIN: f64 = 12.0;
 
     let Ok(Some(monitor)) = window.current_monitor().or_else(|_| window.primary_monitor()) else {
@@ -61,7 +65,11 @@ fn park_bottom_right(window: &tauri::WebviewWindow) {
     let margin = (MARGIN * monitor.scale_factor()) as i32;
 
     let x = work.position.x + work.size.width as i32 - size.width as i32 - margin;
-    let y = work.position.y + work.size.height as i32 - size.height as i32 - margin;
+    let y = if crate::platform::ALERT_AT_TOP {
+        work.position.y + margin
+    } else {
+        work.position.y + work.size.height as i32 - size.height as i32 - margin
+    };
 
     if let Err(e) = window.set_position(tauri::PhysicalPosition::new(x, y)) {
         log::warn!("Could not position the alert window: {e}");
@@ -107,7 +115,7 @@ pub async fn show_timer_alert(app: AppHandle, title: String, body: String) -> Re
     let _ = window.emit("orion-timer-alert", &payload);
 
     // Before showing, so it never appears in one place and jumps to another.
-    park_bottom_right(&window);
+    park_in_notification_corner(&window);
 
     window
         .show()

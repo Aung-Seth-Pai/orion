@@ -20,14 +20,12 @@ import {
 import type { AutomationScript, ScriptType, Workspace } from "../types";
 import EnvVarsModal from "./EnvVarsModal";
 import { useDragReorder } from "../utils/reorder";
-
-const TYPE_LABELS: Record<ScriptType, string> = {
-  powershell: "PowerShell",
-  cmd: "CMD",
-  python: "Python",
-  node: "Node.js",
-  wsl_bash: "WSL Bash",
-};
+import {
+  canRunScript,
+  platform,
+  scriptLabel,
+  unrunnableReason,
+} from "../utils/platform";
 
 /** Categorical hues, defined in tokens.css -- see the note there on why these
  *  are not semantic tokens and not per-theme. */
@@ -37,6 +35,8 @@ const TYPE_BADGE: Record<ScriptType, string> = {
   python: "bg-kind-python/15 text-kind-python",
   node: "bg-kind-node/15 text-kind-node",
   wsl_bash: "bg-kind-wsl/15 text-kind-wsl",
+  zsh: "bg-kind-zsh/15 text-kind-zsh",
+  bash: "bg-kind-bash/15 text-kind-bash",
 };
 
 const PLACEHOLDERS: Record<ScriptType, string> = {
@@ -45,9 +45,30 @@ const PLACEHOLDERS: Record<ScriptType, string> = {
   python: 'print("hello from python")',
   node: 'console.log("hello from node")',
   wsl_bash: 'echo "hello from wsl"',
+  zsh: 'echo "hello from zsh"',
+  bash: 'echo "hello from bash"',
 };
 
-const SCRIPT_TYPES = Object.keys(TYPE_LABELS) as ScriptType[];
+/**
+ * The types offered when writing a NEW script: only what this machine can run,
+ * so you cannot author something that refuses the moment you press Run.
+ *
+ * An existing script of another platform's type is a different case — see
+ * `typeOptions` below, which keeps it in the list while it is being edited so
+ * that opening a Windows script on a Mac to fix a typo does not silently
+ * rewrite it to zsh.
+ */
+function runnableTypes(): ScriptType[] {
+  return platform().runnableScriptTypes as ScriptType[];
+}
+
+function typeOptions(editing: ScriptType | null): ScriptType[] {
+  const runnable = runnableTypes();
+  if (editing && !runnable.includes(editing)) {
+    return [editing, ...runnable];
+  }
+  return runnable;
+}
 
 interface ScriptsSectionProps {
   workspace: Workspace;
@@ -61,7 +82,7 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
   const [composerOpen, setComposerOpen] = useState(false);
   const [editingScript, setEditingScript] = useState<AutomationScript | null>(null);
   const [title, setTitle] = useState("");
-  const [scriptType, setScriptType] = useState<ScriptType>("powershell");
+  const [scriptType, setScriptType] = useState<ScriptType>(runnableTypes()[0]);
   const [content, setContent] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -95,7 +116,7 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
 
   function resetComposer() {
     setTitle("");
-    setScriptType("powershell");
+    setScriptType(runnableTypes()[0]);
     setContent("");
     setEditingScript(null);
   }
@@ -267,9 +288,10 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
               onChange={(e) => setScriptType(e.target.value as ScriptType)}
               className="rounded bg-raised px-2.5 py-1.5 text-[13px] text-ink outline-none ring-1 ring-transparent focus:ring-focus/50"
             >
-              {SCRIPT_TYPES.map((t) => (
+              {typeOptions(editingScript?.scriptType ?? null).map((t) => (
                 <option key={t} value={t}>
-                  {TYPE_LABELS[t]}
+                  {scriptLabel(t)}
+                  {canRunScript(t) ? "" : " — not on this platform"}
                 </option>
               ))}
             </select>
@@ -309,13 +331,15 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
         <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-rule py-6 text-center">
           <ScrollText size={20} className="text-ink-ghost" />
           <p className="text-xs text-ink-faint">
-            No scripts yet. Automate PowerShell, CMD, Python, Node or WSL Bash.
+            No scripts yet. Automate{" "}
+            {runnableTypes().map(scriptLabel).join(", ").replace(/, ([^,]*)$/, " or $1")}.
           </p>
         </div>
       ) : (
         <ul className="space-y-2">
           {scripts.map((script) => {
             const running = runningId === script.id;
+            const runnable = canRunScript(script.scriptType);
             return (
               <li
                 key={script.id}
@@ -330,9 +354,12 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
               >
                 <div className="flex items-center gap-2 px-3 pt-2.5 pb-2">
                   <span
-                    className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${TYPE_BADGE[script.scriptType]}`}
+                    title={unrunnableReason(script.scriptType) ?? undefined}
+                    className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                      TYPE_BADGE[script.scriptType] ?? "bg-raised text-ink-muted"
+                    } ${runnable ? "" : "opacity-50"}`}
                   >
-                    {TYPE_LABELS[script.scriptType]}
+                    {scriptLabel(script.scriptType)}
                   </span>
                   <span className="truncate text-[13px] font-medium text-ink">
                     {script.title}
@@ -363,8 +390,8 @@ export default function ScriptsSection({ workspace, onError }: ScriptsSectionPro
                   </button>
                   <button
                     onClick={() => void handleRun(script.id)}
-                    disabled={running}
-                    title="Execute script"
+                    disabled={running || !runnable}
+                    title={unrunnableReason(script.scriptType) ?? "Execute script"}
                     className="flex items-center gap-1 rounded bg-positive/90 px-2 py-0.5 text-[11px] font-medium text-positive-on transition-colors enabled:hover:bg-positive disabled:opacity-50 cursor-default"
                   >
                     {running ? (
