@@ -5,8 +5,11 @@
 //! picking an interpreter for a script, parsing a native path, and the handful
 //! of window-placement conventions that differ between desktops.
 //!
-//! The rule the rest of the crate follows is that **no other module carries a
-//! `#[cfg(target_os)]` attribute**. `commands.rs` calls `platform::reveal_path`
+//! The rule the rest of the crate follows is that **no other module's
+//! production code carries a `#[cfg(target_os)]` attribute**. The exception is
+//! test code, where an assertion about a native path's shape is only meaningful
+//! on the host that uses that shape; those gates are few and each names what it
+//! is asserting. `commands.rs` calls `platform::reveal_path`
 //! and does not know or care what that runs. The payoff is that the entire
 //! delta between platforms can be read side by side in two files of a few
 //! hundred lines each, which is both what makes the behaviour auditable and

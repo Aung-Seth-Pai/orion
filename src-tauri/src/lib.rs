@@ -6,7 +6,8 @@ mod commands;
 mod db;
 mod models;
 /// Every OS-specific behaviour in the app. See `platform/mod.rs` for the rule
-/// the rest of the crate follows: no other module carries a `cfg(target_os)`.
+/// the rest of the crate follows: no other module's production code carries a
+/// `cfg(target_os)`.
 pub mod platform;
 mod tray;
 

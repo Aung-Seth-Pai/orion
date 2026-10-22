@@ -3,8 +3,8 @@ import { displayTarget } from "./paths";
 
 describe("displayTarget", () => {
   it("turns a drive-letter file URL back into a native path", () => {
-    expect(displayTarget("file:///C:/Users/zepha/Downloads/Resume.pdf")).toBe(
-      "C:\\Users\\zepha\\Downloads\\Resume.pdf"
+    expect(displayTarget("file:///C:/Docs/Specs.pdf")).toBe(
+      "C:\\Docs\\Specs.pdf"
     );
   });
 

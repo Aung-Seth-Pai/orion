@@ -3315,6 +3315,23 @@ mod tests {
 
     // --- Resource suggestions -------------------------------------------------
 
+    /// A local file path of the shape this host actually produces, with the
+    /// URL `normalize_target_path` is expected to turn it into.
+    ///
+    /// Gated because the assertion is only meaningful per host: a Windows path
+    /// pasted on a Mac is correctly left alone (it is not an absolute path
+    /// there), so hardcoding one platform's answer makes the test a statement
+    /// about the runner rather than about the normaliser.
+    #[cfg(target_os = "windows")]
+    const TYPED_LOCAL_PATH: &str = r"C:\Docs\Specs.pdf";
+    #[cfg(target_os = "windows")]
+    const STORED_LOCAL_URL: &str = "file:///C:/Docs/Specs.pdf";
+
+    #[cfg(target_os = "macos")]
+    const TYPED_LOCAL_PATH: &str = "/Users/Shared/Docs/Specs.pdf";
+    #[cfg(target_os = "macos")]
+    const STORED_LOCAL_URL: &str = "file:///Users/Shared/Docs/Specs.pdf";
+
     fn db_with_resources_across_workspaces() -> rusqlite::Connection {
         let conn = crate::db::open_test_connection();
         crate::db::init_schema(&conn).unwrap();
@@ -3324,10 +3341,15 @@ mod tests {
              INSERT INTO resources (id, workspace_id, type, title, target_path)
                  VALUES ('r1', 'w1', 'link', 'Stripe API docs', 'https://stripe.com/docs');
              INSERT INTO resources (id, workspace_id, type, title, target_path)
-                 VALUES ('r2', 'w2', 'link', 'Runbook', 'https://wiki.internal/runbook');
-             INSERT INTO resources (id, workspace_id, type, title, target_path)
-                 VALUES ('r3', 'w2', 'link', 'Resume',
-                         'file:///C:/Users/zepha/Downloads/Resume.pdf');",
+                 VALUES ('r2', 'w2', 'link', 'Runbook', 'https://wiki.internal/runbook');",
+        )
+        .unwrap();
+        // Bound rather than inlined, because the shape of a local path is
+        // chosen per host.
+        conn.execute(
+            "INSERT INTO resources (id, workspace_id, type, title, target_path)
+             VALUES ('r3', 'w2', 'link', 'Specs', ?1)",
+            params![STORED_LOCAL_URL],
         )
         .unwrap();
         conn
@@ -3422,9 +3444,8 @@ mod tests {
     fn an_exact_duplicate_is_found_through_normalisation() {
         let conn = db_with_resources_across_workspaces();
 
-        let typed = r"C:\Users\zepha\Downloads\Resume.pdf";
-        let normalised = normalize_target_path("link", typed).unwrap();
-        assert_eq!(normalised, "file:///C:/Users/zepha/Downloads/Resume.pdf");
+        let normalised = normalize_target_path("link", TYPED_LOCAL_PATH).unwrap();
+        assert_eq!(normalised, STORED_LOCAL_URL);
 
         let found: String = conn
             .query_row(

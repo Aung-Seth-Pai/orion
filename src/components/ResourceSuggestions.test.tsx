@@ -59,13 +59,13 @@ describe("ResourceSuggestions", () => {
         duplicate={null}
         similar={[
           suggestion({
-            targetPath: "file:///C:/Users/zepha/Downloads/Resume.pdf",
+            targetPath: "file:///C:/Docs/Specs.pdf",
           }),
         ]}
       />
     );
     expect(
-      screen.getByText("C:\\Users\\zepha\\Downloads\\Resume.pdf")
+      screen.getByText("C:\\Docs\\Specs.pdf")
     ).toBeInTheDocument();
   });
 
