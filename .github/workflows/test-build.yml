@@ -76,6 +76,13 @@ jobs:
           # kernel refuses to execute the binary at all, so a test build without
           # it would fail to launch for a reason the real build would not have.
           APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos-15' && '-' || '' }}
+          # `createUpdaterArtifacts` is on in tauri.conf.json, so every build
+          # emits a signed updater tarball -- on macOS too, even though macOS is
+          # left out of latest.json. Without the key the build fails after the
+          # installers are already bundled. Passed rather than switched off so a
+          # test build is configured exactly like the release it stands in for.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
           args: --target ${{ matrix.target }}
 
