@@ -180,6 +180,8 @@ pub struct PlatformInfo {
     pub file_manager_label: String,
     /// `"\\"` or `"/"`, for displaying stored paths the way the user typed them.
     pub path_separator: String,
+    /// The shortcut a fresh install uses, which differs per platform.
+    pub default_shortcut: String,
 }
 
 /// What an import actually brought in, so the UI can say so rather than just

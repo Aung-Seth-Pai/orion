@@ -24,6 +24,7 @@ const MAC = {
   terminalLabel: "Terminal",
   fileManagerLabel: "Finder",
   pathSeparator: "/",
+  defaultShortcut: "CmdOrCtrl+Alt+O",
 };
 
 const WINDOWS = {
@@ -34,6 +35,7 @@ const WINDOWS = {
   terminalLabel: "Windows Terminal",
   fileManagerLabel: "Explorer",
   pathSeparator: "\\",
+  defaultShortcut: "CmdOrCtrl+Shift+O",
 };
 
 /** Puts the module into a known platform, as `main.tsx` does at startup. */
@@ -137,11 +139,27 @@ describe("displayAccelerator", () => {
 
   it("uses glyphs with no separator on a Mac", async () => {
     await become(MAC);
-    expect(displayAccelerator("CmdOrCtrl+Shift+O")).toBe("⌘⇧O");
+    expect(displayAccelerator("CmdOrCtrl+Shift+O")).toBe("⇧⌘O");
     // The separator a caller would have used between words is dropped, because
-    // no Mac app writes "⌘ + ⇧ + O".
-    expect(displayAccelerator("CmdOrCtrl+Shift+O", " + ")).toBe("⌘⇧O");
+    // no Mac app writes "⇧ + ⌘ + O".
+    expect(displayAccelerator("CmdOrCtrl+Shift+O", " + ")).toBe("⇧⌘O");
     expect(displayAccelerator("Alt+Space")).toBe("⌥Space");
+  });
+
+  it("writes modifiers in the order a Mac writes them", async () => {
+    await become(MAC);
+    // Stored Cmd-first, displayed Option-first: Apple's order is always
+    // Control, Option, Shift, Command, whatever the accelerator says.
+    expect(displayAccelerator("CmdOrCtrl+Alt+O")).toBe("⌥⌘O");
+    expect(displayAccelerator("CmdOrCtrl+Alt+Shift+K")).toBe("⌥⇧⌘K");
+    expect(displayAccelerator("CmdOrCtrl+Control+Alt+Shift+P")).toBe("⌃⌥⇧⌘P");
+  });
+
+  it("carries the platform's own default", async () => {
+    await become(MAC);
+    expect(displayAccelerator(platform().defaultShortcut)).toBe("⌥⌘O");
+    await become(WINDOWS);
+    expect(displayAccelerator(platform().defaultShortcut)).toBe("Ctrl+Shift+O");
   });
 
   it("leaves a key it does not recognise alone", async () => {

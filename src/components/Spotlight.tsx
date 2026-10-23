@@ -13,7 +13,7 @@ import { getSettings } from "../api/settings";
 import { searchAll } from "../api/search";
 import { executeScript } from "../api/scripts";
 import { launchResource } from "../api/resources";
-import { displayAccelerator } from "../utils/platform";
+import { displayAccelerator, platform } from "../utils/platform";
 import type { SearchResult } from "../types";
 
 const TYPE_ICONS: Record<SearchResult["itemType"], typeof Globe> = {
@@ -24,16 +24,16 @@ const TYPE_ICONS: Record<SearchResult["itemType"], typeof Globe> = {
   notice: Sparkles,
 };
 
-const DEFAULT_SPOTLIGHT_SHORTCUT = "CmdOrCtrl+Shift+O";
-
-/** `CmdOrCtrl+Shift+O` -> `Ctrl+Shift+O`, or `⇧⌘O` on a Mac. */
+/** `CmdOrCtrl+Shift+O` -> `Ctrl+Shift+O`; `CmdOrCtrl+Alt+O` -> `⌥⌘O` on a Mac. */
 function prettifyShortcut(accelerator: string): string {
   return displayAccelerator(accelerator);
 }
 
 export default function Spotlight() {
   const [query, setQuery] = useState("");
-  const [shortcut, setShortcut] = useState(DEFAULT_SPOTLIGHT_SHORTCUT);
+  // Read here rather than at module scope: module bodies run before
+  // `loadPlatform()` resolves, so a const would hold the Windows fallback.
+  const [shortcut, setShortcut] = useState(() => platform().defaultShortcut);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [selected, setSelected] = useState(0);
   const [loading, setLoading] = useState(false);

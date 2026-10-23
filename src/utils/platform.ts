@@ -22,6 +22,8 @@ export interface PlatformInfo {
   terminalLabel: string;
   fileManagerLabel: string;
   pathSeparator: string;
+  /** The accelerator a fresh install binds; it differs per platform. */
+  defaultShortcut: string;
 }
 
 /**
@@ -41,6 +43,7 @@ const FALLBACK: PlatformInfo = {
   terminalLabel: "Windows Terminal",
   fileManagerLabel: "Explorer",
   pathSeparator: "\\",
+  defaultShortcut: "CmdOrCtrl+Shift+O",
 };
 
 let current: PlatformInfo = FALLBACK;
@@ -154,8 +157,13 @@ export function displayAccelerator(accelerator: string, separator = "+"): string
     Option: "⌥",
     Shift: "⇧",
   };
-  return accelerator
-    .split("+")
-    .map((part) => glyphs[part] ?? part)
-    .join("");
+  // And they are always written in this order, however the accelerator spelled
+  // them: a stored `CmdOrCtrl+Alt+O` reads as ⌥⌘O on a Mac, never ⌘⌥O.
+  const order = ["⌃", "⌥", "⇧", "⌘"];
+  const parts = accelerator.split("+").map((part) => glyphs[part] ?? part);
+  const modifiers = parts
+    .filter((p) => order.includes(p))
+    .sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  const keys = parts.filter((p) => !order.includes(p));
+  return [...modifiers, ...keys].join("");
 }

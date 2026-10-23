@@ -2920,6 +2920,7 @@ pub fn get_platform_info() -> PlatformInfo {
         terminal_label: platform::TERMINAL_LABEL.to_string(),
         file_manager_label: platform::FILE_MANAGER_LABEL.to_string(),
         path_separator: platform::PATH_SEPARATOR.to_string(),
+        default_shortcut: platform::DEFAULT_SPOTLIGHT_SHORTCUT.to_string(),
     }
 }
 

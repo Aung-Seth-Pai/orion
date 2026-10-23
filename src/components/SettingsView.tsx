@@ -56,7 +56,6 @@ function describeUnrunnable(summary: ImportSummary): string {
 }
 
 const SPOTLIGHT_SHORTCUT_KEY = "spotlight_shortcut";
-const DEFAULT_SPOTLIGHT_SHORTCUT = "CmdOrCtrl+Shift+O";
 const DEFAULT_IDE_FALLBACK = "code";
 const DEFAULT_POMODORO_MINUTES = 25;
 
@@ -216,8 +215,9 @@ const TAB_LABELS: Record<(typeof TABS)[number], string> = {
 export default function SettingsView({ onError, onDataReplaced }: SettingsViewProps) {
   const [tab, setTab] = useState<(typeof TABS)[number]>("general");
 
+  // Lazily, because module bodies run before `loadPlatform()` resolves.
   const [spotlightShortcut, setSpotlightShortcutState] = useState(
-    DEFAULT_SPOTLIGHT_SHORTCUT
+    () => platform().defaultShortcut
   );
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
   const [buildingIndex, setBuildingIndex] = useState(false);
@@ -258,7 +258,7 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
         setPomodoroDraft(String(minutes));
 
         setSpotlightShortcutState(
-          s[SPOTLIGHT_SHORTCUT_KEY]?.trim() || DEFAULT_SPOTLIGHT_SHORTCUT
+          s[SPOTLIGHT_SHORTCUT_KEY]?.trim() || platform().defaultShortcut
         );
       })
       .catch((e) => onError(String(e)))

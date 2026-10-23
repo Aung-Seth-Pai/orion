@@ -324,6 +324,10 @@ pub fn run() {
             find_resource_by_target,
             remove_ai_model
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running orion");
+        .build(tauri::generate_context!())
+        .expect("error while building orion")
+        // Built and then run, rather than `.run(context)`, so there is a place
+        // to handle run-loop events. macOS needs one: a Dock click arrives here
+        // and nowhere else.
+        .run(|app, event| platform::handle_run_event(app, &event));
 }

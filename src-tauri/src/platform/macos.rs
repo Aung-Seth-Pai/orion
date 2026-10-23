@@ -23,6 +23,19 @@ pub const PATH_SEPARATOR: &str = "/";
 /// macOS stacks its notifications down from the top-right.
 pub const ALERT_AT_TOP: bool = true;
 
+/// Deliberately not `Cmd+Shift+O`, which is taken.
+///
+/// Shift-Command-O is the system shortcut for the Documents folder. It works in
+/// Finder *and* in every app's Open and Save dialog, so a global hotkey on that
+/// combination would shadow it everywhere, in apps that have nothing to do with
+/// Orion. Registration would succeed and the damage would be silent -- the user
+/// would simply find that a shortcut they have used for years had stopped
+/// working, with no reason to suspect this app.
+///
+/// `Opt+Cmd+O` is not claimed by the system and keeps the mnemonic. Windows
+/// keeps `Ctrl+Shift+O`, where nothing collides with it.
+pub const DEFAULT_SPOTLIGHT_SHORTCUT: &str = "CmdOrCtrl+Alt+O";
+
 /// Directories a developer's tools actually live in, which a GUI app does not
 /// inherit.
 ///
@@ -248,6 +261,24 @@ pub fn legacy_data_dir() -> Option<PathBuf> {
 /// Marks the tray icon as a template image so the system tints it — black on a
 /// light menu bar, white on a dark one. Without this the icon keeps its own
 /// colours and goes nearly invisible in one of the two appearances.
+/// Brings the main window back when the Dock icon is clicked.
+///
+/// Closing the main window hides it rather than quitting, which on Windows
+/// leaves the app reachable from the tray. On macOS the app also keeps a Dock
+/// icon, and clicking it is the obvious way to get the window back -- but that
+/// click arrives as `RunEvent::Reopen`, and an app that ignores it just
+/// activates with no window shown. The menu bar reads "Orion" and nothing
+/// happens, which looks like the app is broken.
+///
+/// The main window is shown whatever `has_visible_windows` says: the alert and
+/// the spotlight windows both count as visible, so trusting that flag would
+/// leave the Dock click dead whenever a timer alert happened to be up.
+pub fn handle_run_event(app: &tauri::AppHandle, event: &tauri::RunEvent) {
+    if let tauri::RunEvent::Reopen { .. } = event {
+        crate::tray::focus_main(app);
+    }
+}
+
 pub fn finish_tray(tray: &tauri::tray::TrayIcon) {
     if let Err(e) = tray.set_icon_as_template(true) {
         log::warn!("Could not mark the tray icon as a template: {e}");

@@ -4,11 +4,11 @@
 
 Orion is a zero-friction, single-context workspace launcher that instantly loads your project’s essential resources, notes, and focus timer—eliminating tab clutter and keeping you locked into one task at a time.
 
-It lives in your system tray — the menu bar on a Mac. Press `Ctrl + Shift + O` (`⌘⇧O` on macOS, rebindable in Settings), type a project name, and you are in: the right folders, the right docs, the right scripts, and a running timer. Nothing else competing for your attention.
+It lives in your system tray — the menu bar on a Mac. Press `Ctrl + Shift + O` (`⌥⌘O` on macOS, rebindable in Settings), type a project name, and you are in: the right folders, the right docs, the right scripts, and a running timer. Nothing else competing for your attention.
 
 ## ✨ Key Features
 
-* **Global Quick Search:** Press `Ctrl + Shift + O` (`⌘⇧O` on macOS) from anywhere — or rebind it to any combination you prefer — to search and launch instantly. Narrow the results with slash command scoping: `/ws` for workspaces, `/link` for links, `/folder` for folders, `/script` for automation scripts, and `/ai` to search by meaning rather than by exact words.
+* **Global Quick Search:** Press `Ctrl + Shift + O` (`⌥⌘O` on macOS) from anywhere — or rebind it to any combination you prefer — to search and launch instantly. Narrow the results with slash command scoping: `/ws` for workspaces, `/link` for links, `/folder` for folders, `/script` for automation scripts, and `/ai` to search by meaning rather than by exact words.
 * **Multi-Language Automation:** Write and execute scripts directly from the UI, with per-workspace interpreter overrides. On Windows: PowerShell, CMD, WSL Bash, Python and Node.js. On macOS: zsh, bash, Python and Node.js. See [Scripts across platforms](#-scripts-across-platforms).
 * **Focus Analytics:** Independent Pomodoro and stopwatch timers per workspace that keep running while you work elsewhere in the app, native OS notification banners on completion, and resettable **Total Time** tracking so you can measure a sprint without losing your history.
 * **Environment Variable Injection:** Store workspace-specific secrets (API keys, database URIs) that are injected into your scripts at runtime — including across the WSL boundary.
@@ -125,6 +125,6 @@ which is worse than one that honestly declines to run.
 3. **Track Your Tasks:** Keep the project's working checklist in the workspace instead of a scratch file you will lose.
 4. **Start the Timer:** Run a stopwatch or a Pomodoro. Sessions are logged per workspace and roll up into Total Time, which you can reset whenever a new sprint starts.
 5. **Write a Script:** Automate your data pipelines or environment setups.
-6. **Hide the App:** Close the window. It keeps running in the background. Press `Ctrl + Shift + O` (`⌘⇧O` on macOS) to summon it instantly.
+6. **Hide the App:** Close the window. It keeps running in the background. Press `Ctrl + Shift + O` (`⌥⌘O` on macOS) to summon it instantly.
 
 Built with [Tauri v2](https://tauri.app), Rust, React, and SQLite.

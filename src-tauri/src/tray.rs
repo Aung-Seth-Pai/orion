@@ -5,12 +5,16 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 /// Used until the user chooses otherwise, and the fallback if a stored
 /// accelerator turns out to be unregistrable at startup.
-pub const DEFAULT_SPOTLIGHT_SHORTCUT: &str = "CmdOrCtrl+Shift+O";
+///
+/// Re-exported from the platform module, which owns it because the two
+/// platforms cannot share one default: the Windows mnemonic is already taken by
+/// the system on macOS.
+pub use crate::platform::DEFAULT_SPOTLIGHT_SHORTCUT;
 
 /// `app_settings` key holding the user's chosen accelerator.
 pub const SPOTLIGHT_SHORTCUT_KEY: &str = "spotlight_shortcut";
 
-fn focus_main(app: &AppHandle) {
+pub(crate) fn focus_main(app: &AppHandle) {
     if let Some(main) = app.get_webview_window("main") {
         let _ = main.unminimize();
         let _ = main.show();

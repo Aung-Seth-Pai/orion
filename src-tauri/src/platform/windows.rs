@@ -23,6 +23,10 @@ pub const PATH_SEPARATOR: &str = "\\";
 /// Windows parks its own notifications in the bottom-right, above the taskbar.
 pub const ALERT_AT_TOP: bool = false;
 
+/// Nothing in Windows claims Ctrl+Shift+O, so the mnemonic default stands.
+/// macOS cannot use it -- see the note on the macOS constant.
+pub const DEFAULT_SPOTLIGHT_SHORTCUT: &str = "CmdOrCtrl+Shift+O";
+
 /// Applied to every child process Orion spawns.
 ///
 /// One hook rather than a flag at each call site, because the two platforms
@@ -272,6 +276,10 @@ pub fn legacy_data_dir() -> Option<PathBuf> {
 
 /// Last chance to adjust the tray icon once it exists. Nothing to do here; the
 /// macOS build uses it to mark the icon as a template.
+/// Nothing to do: Windows has no Dock, and the tray already owns restoring
+/// the window.
+pub fn handle_run_event(_app: &tauri::AppHandle, _event: &tauri::RunEvent) {}
+
 pub fn finish_tray(_tray: &tauri::tray::TrayIcon) {}
 
 #[cfg(test)]
