@@ -46,21 +46,35 @@ Requires macOS 11 or later. Intel Macs are not currently built for.
 
 1. Go to the [Releases](../../releases) page.
 2. Download the latest `Orion_aarch64.dmg`.
-3. Open it and drag **Orion** to your Applications folder.
-4. **The first launch needs a right-click.** Find Orion in Applications,
-   right-click (or Control-click) it, choose **Open**, then confirm **Open** in
-   the dialog. Double-clicking it the normal way will be blocked; right-clicking
-   is what gives you the option to proceed. You only need to do this once.
-5. If instead you see **"Orion is damaged and can't be opened"**, macOS has
-   quarantined the download. Clear the flag in Terminal:
+3. Open it and drag **Orion** to your Applications folder. Do this before the
+   next step — clearing the quarantine flag on the copy still inside the
+   mounted disk image does not carry over to the one you install.
+4. **The first launch is blocked.** You will see *"Apple could not verify
+   'Orion' is free of malware"*, offering only **Move to Trash** or **Cancel**.
+   Click **Cancel**. Nothing is wrong with the download; macOS blocks every app
+   that has not been notarized by Apple, which requires a paid Developer
+   account. Then allow it once, either way:
+
+   **In Terminal:**
 
    ```sh
    xattr -dr com.apple.quarantine /Applications/Orion.app
    ```
 
-   Then open it normally. This is Gatekeeper refusing an unsigned app, not a
-   corrupted file.
-6. Look for the Orion icon in your menu bar to open the dashboard.
+   Then open Orion normally.
+
+   **Or without Terminal:** open **System Settings → Privacy & Security** and
+   scroll to the **Security** section. A line reading *"Orion was blocked to
+   protect your Mac"* appears there with an **Open Anyway** button. Click it,
+   authenticate, and confirm **Open**. That line only shows for a few minutes
+   after a blocked launch, so if it is missing, try opening Orion again first.
+
+   Either way, you only do this once. Subsequent launches are normal.
+
+   > On macOS 14 and earlier you could instead right-click the app and choose
+   > **Open**. Apple removed that shortcut in macOS 15 (Sequoia); on current
+   > versions, use one of the two methods above.
+5. Look for the Orion icon in your menu bar to open the dashboard.
 
 **Updating on macOS** is manual: download the new `.dmg` and replace the app.
 The in-app updater only serves Windows, because an unsigned app cannot reliably
