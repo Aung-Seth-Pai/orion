@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Plus, Rocket, Settings as SettingsIcon, Trash2, X } from "lucide-react";
+import { Loader2, Pencil, Plus, Rocket, Settings as SettingsIcon, Trash2, X } from "lucide-react";
 import type { Workspace } from "../types";
 import { useAppVersion } from "../utils/version";
 import { useDragReorder } from "../utils/reorder";
@@ -36,6 +36,7 @@ interface SidebarProps {
   onSelect: (id: string) => void;
   onOpenSettings: () => void;
   onCreate: (name: string, color: string | null) => Promise<void>;
+  onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
   onReorder: (ordered: Workspace[]) => void;
 }
@@ -48,11 +49,45 @@ export default function Sidebar({
   onSelect,
   onOpenSettings,
   onCreate,
+  onRename,
   onDelete,
   onReorder,
 }: SidebarProps) {
   const appVersion = useAppVersion();
   const { draggingId, overId, itemProps } = useDragReorder(workspaces, onReorder);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  // Escape has to be distinguishable from clicking away, and both arrive as a
+  // blur. A ref rather than state because the flag is read during the blur that
+  // the same keystroke causes -- a state update would not have landed yet.
+  const cancelledRename = useRef(false);
+
+  function startRename(ws: Workspace) {
+    cancelledRename.current = false;
+    setDraft(ws.name);
+    setEditingId(ws.id);
+  }
+
+  /**
+   * The single commit path: Enter and Escape both blur the field, so there is
+   * one place where a rename can be applied and one place it can be abandoned.
+   *
+   * A name that is empty or unchanged is abandoned rather than sent. The
+   * backend rejects an empty name, but asking it to is a round trip to be told
+   * something already known, and it would surface as an error banner for what
+   * is really just a cancelled edit.
+   */
+  function finishRename(ws: Workspace) {
+    setEditingId(null);
+    if (cancelledRename.current) {
+      cancelledRename.current = false;
+      return;
+    }
+    const trimmed = draft.trim();
+    if (!trimmed || trimmed === ws.name) return;
+    onRename(ws.id, trimmed);
+  }
 
   // The ceiling for every mark is the user's own busiest workspace, so it is
   // computed once per render rather than per row -- and it is what keeps the
@@ -123,16 +158,51 @@ export default function Sidebar({
             return (
               <li
                 key={ws.id}
-                {...itemProps(ws.id)}
+                {...(editingId === ws.id ? {} : itemProps(ws.id))}
                 className={`rounded-md transition-opacity ${
                   draggingId === ws.id ? "opacity-40" : ""
                 } ${
                   overId === ws.id ? "ring-1 ring-accent/60" : ""
                 }`}
               >
+                {editingId === ws.id ? (
+                  <div className="flex w-full items-center gap-2.5 rounded-md bg-raised/70 px-2 py-1.5 ring-1 ring-accent/30">
+                    <span
+                      className="shrink-0"
+                      style={ws.color ? { color: ws.color } : undefined}
+                    >
+                      <ConstellationMark
+                        seed={ws.id}
+                        depth={depthFromHours(
+                          (workspaceTimes[ws.id] ?? 0) / 3600,
+                          maxHours
+                        )}
+                        size={MARK_SIZE}
+                      />
+                    </span>
+                    <input
+                      autoFocus
+                      value={draft}
+                      maxLength={100}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onBlur={() => finishRename(ws)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.currentTarget.blur();
+                        } else if (e.key === "Escape") {
+                          cancelledRename.current = true;
+                          e.currentTarget.blur();
+                        }
+                      }}
+                      className="min-w-0 flex-1 bg-transparent text-[13px] text-ink-strong outline-none"
+                    />
+                  </div>
+                ) : (
                 <button
                   onClick={() => onSelect(ws.id)}
-                  title="Drag to reorder"
+                  onDoubleClick={() => startRename(ws)}
+                  title="Drag to reorder, double-click to rename"
                   className={`group flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors duration-100 cursor-default ${
                     active
                       ? "bg-raised-hover/50 text-ink-strong"
@@ -161,16 +231,29 @@ export default function Sidebar({
                   <span
                     role="button"
                     tabIndex={-1}
+                    title="Rename workspace"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startRename(ws);
+                    }}
+                    className="ml-auto rounded p-0.5 text-ink-faint opacity-0 transition-opacity hover:text-ink group-hover:opacity-100 focus:opacity-100"
+                  >
+                    <Pencil size={13} />
+                  </span>
+                  <span
+                    role="button"
+                    tabIndex={-1}
                     title="Delete workspace"
                     onClick={(e) => {
                       e.stopPropagation();
                       onDelete(ws.id);
                     }}
-                    className="ml-auto rounded p-0.5 text-ink-faint opacity-0 transition-opacity hover:text-danger-ink group-hover:opacity-100 focus:opacity-100"
+                    className="rounded p-0.5 text-ink-faint opacity-0 transition-opacity hover:text-danger-ink group-hover:opacity-100 focus:opacity-100"
                   >
                     <Trash2 size={13} />
                   </span>
                 </button>
+                )}
               </li>
             );
           })}

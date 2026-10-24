@@ -22,6 +22,7 @@ import {
   deleteWorkspace,
   getWorkspaces,
   reorderWorkspaces,
+  updateWorkspace,
 } from "./api/workspaces";
 import type {
   SessionType,
@@ -338,6 +339,23 @@ function MainShell() {
     [workspaces, activeId]
   );
 
+  const handleRename = useCallback(
+    (id: string, name: string) => {
+      setError(null);
+      const snapshot = workspaces;
+      // Applied immediately and rolled back if the backend refuses -- the same
+      // shape as handleDelete and handleReorder.
+      setWorkspaces((prev) =>
+        prev.map((w) => (w.id === id ? { ...w, name } : w))
+      );
+      updateWorkspace(id, { name }).catch((e) => {
+        setError(String(e));
+        setWorkspaces(snapshot);
+      });
+    },
+    [workspaces]
+  );
+
   const handleReorder = useCallback(
     (ordered: Workspace[]) => {
       setError(null);
@@ -394,6 +412,7 @@ function MainShell() {
         onSelect={handleSelect}
         onOpenSettings={() => setSettingsOpen((v) => !v)}
         onCreate={handleCreate}
+        onRename={handleRename}
         onDelete={handleDelete}
         onReorder={handleReorder}
       />
