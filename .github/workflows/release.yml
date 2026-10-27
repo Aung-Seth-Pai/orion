@@ -1,34 +1,55 @@
 name: Release Orion
+
+# A tag builds and publishes every platform. A manual run can publish a subset,
+# which is what makes a staged release possible: ship the platform that has been
+# tested, then add the other one to the same release once it has been.
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release, e.g. v0.4.0. Created if it does not exist.'
+        required: true
+        type: string
+      platforms:
+        description: Which platforms to publish
+        type: choice
+        default: both
+        options: [both, windows, macos]
 
 jobs:
+  # The matrix is built here rather than filtered with a job-level `if`, because
+  # the `matrix` context is not available to one -- the condition would read as
+  # empty and silently skip every job. A tag push supplies no inputs and falls
+  # through to both platforms.
+  choose:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          win='{"platform":"windows-latest","target":"x86_64-pc-windows-msvc","updater_json":true}'
+          mac='{"platform":"macos-15","target":"aarch64-apple-darwin","updater_json":false}'
+          case "${{ inputs.platforms }}" in
+            windows) include="[$win]" ;;
+            macos)   include="[$mac]" ;;
+            *)       include="[$win,$mac]" ;;
+          esac
+          echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
+          echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
   release:
+    needs: choose
     permissions:
       contents: write
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - platform: windows-latest
-            target: x86_64-pc-windows-msvc
-            # Windows is the platform the in-app updater serves, so this job
-            # owns latest.json.
-            updater_json: true
-          # macos-15 runners are Apple Silicon. Pinned rather than -latest so
-          # the architecture cannot change under us without a visible edit.
-          - platform: macos-15
-            target: aarch64-apple-darwin
-            # The macOS build is unsigned, so it is deliberately left out of
-            # latest.json. The updater would download the archive, Gatekeeper
-            # would quarantine it, and the in-place replacement would fail --
-            # advertising an update path that cannot complete is worse than
-            # having none. macOS users update by downloading the new .dmg, which
-            # the README explains. Revisit if the app is ever notarized.
-            updater_json: false
+      matrix: ${{ fromJSON(needs.choose.outputs.matrix) }}
     runs-on: ${{ matrix.platform }}
     name: ${{ matrix.target }}
 
@@ -79,10 +100,17 @@ jobs:
           # fails to launch rather than merely warning.
           APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos-15' && '-' || '' }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Orion ${{ github.ref_name }}"
+          tagName: ${{ needs.choose.outputs.tag }}
+          releaseName: "Orion ${{ needs.choose.outputs.tag }}"
           releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}
+          # Windows owns latest.json, because Windows is the platform the in-app
+          # updater serves. The macOS build is deliberately left out of it: the
+          # app is unsigned, so the updater would download the archive,
+          # Gatekeeper would quarantine it, and the in-place replacement would
+          # fail. Advertising an update path that cannot complete is worse than
+          # having none. macOS users update by downloading the new .dmg, which
+          # the README explains. Revisit if the app is ever notarized.
           includeUpdaterJson: ${{ matrix.updater_json }}
