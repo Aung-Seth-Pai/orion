@@ -12,25 +12,14 @@ It lives in your system tray — the menu bar on a Mac. Press `Ctrl + Shift + O`
 * **Multi-Language Automation:** Write and execute scripts directly from the UI, with per-workspace interpreter overrides. On Windows: PowerShell, CMD, WSL Bash, Python and Node.js. On macOS: zsh, bash, Python and Node.js. See [Scripts across platforms](#-scripts-across-platforms).
 * **Focus Analytics:** Independent Pomodoro and stopwatch timers per workspace that keep running while you work elsewhere in the app, native OS notification banners on completion, and resettable **Total Time** tracking so you can measure a sprint without losing your history.
 * **Environment Variable Injection:** Store workspace-specific secrets (API keys, database URIs) that are injected into your scripts at runtime — including across the WSL boundary.
-* **Local-First & High Performance:** Built on **Tauri v2 + Rust + SQLite** rather than Electron. Roughly a **40–80 MB idle RAM footprint**, **sub-millisecond queries** against an on-disk database, and total data sovereignty.
-* **Data Portability:** Your entire setup exports to a single JSON file and imports back on any machine, including one running the other operating system. The export can be **encrypted with a password** — see [Backups](#-backups).
-
-## ⚡ Why Not Electron?
-
-|                      | Orion                                | Typical Electron app       |
-| -------------------- | ------------------------------------ | -------------------------- |
-| **Runtime**    | The OS web view (WebView2 on Windows, WebKit on macOS) | Bundled Chromium           |
-| **Idle RAM**   | ~40–80 MB                           | 300 MB+                    |
-| **Data layer** | Embedded SQLite, sub-ms queries      | Cloud API or bundled DB    |
-| **Your data**  | Stays on your machine, always      | Usually synced to a vendor |
-
-No accounts. No telemetry. No cloud sync. The only network request Orion ever makes is the update check you trigger yourself from Settings — everything else works fully offline, forever.
+* **Local-First & High Performance:** Built on **Tauri v2 + Rust + SQLite**. Roughly a **40–80 MB idle RAM footprint** and **sub-millisecond queries** against an on-disk database.
+* **Offline & Private:** No accounts, no telemetry, no cloud sync. The only network request Orion makes is the update check you trigger yourself from Settings.
+* **Data Portability:** Your entire setup exports to a single file and imports back on any machine, including one running the other operating system. The export can be **encrypted with a password** — see [Backups](#-backups).
 
 ## 📦 Installation (Beta)
 
-Both builds are unsigned — Orion is an indie project without a code-signing
-certificate — so each operating system will warn you once. The steps below are
-how you get past that. They are a one-time thing per install.
+Both builds are unsigned, so each operating system warns you once. The steps
+below clear that warning. You do this once per install.
 
 ### Windows
 
@@ -51,9 +40,8 @@ Requires macOS 11 or later. Intel Macs are not currently built for.
    mounted disk image does not carry over to the one you install.
 4. **The first launch is blocked.** You will see *"Apple could not verify
    'Orion' is free of malware"*, offering only **Move to Trash** or **Cancel**.
-   Click **Cancel**. Nothing is wrong with the download; macOS blocks every app
-   that has not been notarized by Apple, which requires a paid Developer
-   account. Then allow it once, either way:
+   Click **Cancel** — the download is fine; macOS blocks any app that has not
+   been notarized. Then allow it once, either way:
 
    **In Terminal:**
 
@@ -77,9 +65,7 @@ Requires macOS 11 or later. Intel Macs are not currently built for.
 5. Look for the Orion icon in your menu bar to open the dashboard.
 
 **Updating on macOS** is manual: download the new `.dmg` and replace the app.
-The in-app updater only serves Windows, because an unsigned app cannot reliably
-replace itself — the downloaded archive gets quarantined and the swap fails.
-Settings tells you this rather than reporting a network error.
+The in-app updater serves Windows only.
 
 ## 🔀 Scripts across platforms
 
@@ -104,14 +90,12 @@ one of those two, it comes across and simply runs.
 
 **A script belonging to the other platform is kept, not deleted.** Import a
 Windows setup on a Mac and your PowerShell scripts are all still there: listed,
-readable and editable, with their type badge dimmed and the Run button disabled.
-Hovering it explains why. They start working again the moment you open that same
-setup back on Windows.
+readable and editable, with their type badge dimmed and the Run button
+disabled. Hovering it explains why. They start working again the moment you
+open that same setup back on Windows.
 
-Orion tells you this once, at the point of import, rather than letting you find
-it one script at a time. It deliberately does **not** try to translate anything:
-a PowerShell script machine-converted to zsh would look plausible and be wrong,
-which is worse than one that honestly declines to run.
+Scripts are never translated between platforms. The import summary lists any
+that cannot run on the machine you imported onto.
 
 > **macOS interpreter note.** An app launched from the Dock does not inherit the
 > PATH your shell builds, so Orion adds the usual Homebrew and MacPorts
@@ -120,50 +104,26 @@ which is worse than one that honestly declines to run.
 
 ## 🔐 Backups
 
-**Settings → Data → Export data backup** writes your whole setup to one file
-and offers you a password. The password is optional, but it is offered first
-because a backup includes the values of your **environment variables** — which
-is where API keys and database URIs live. An unprotected backup is a readable
-list of them, and backups are exactly the kind of file that ends up on a USB
-stick or in a sync folder.
+**Settings → Data → Export data backup** writes your whole setup to one file and
+offers you a password. A backup includes the values of your **environment
+variables**, so without a password those values are readable by anyone who
+opens the file.
 
-With a password, the file is encrypted with **AES-256-GCM**, and the key is
-derived from your password with **Argon2id** tuned to take roughly half a
-second. That delay is the point: it is barely noticeable once, and it makes
-guessing passwords in bulk impractical. The file also carries an authentication
-tag covering both the data and the encryption parameters, so a backup that has
+With a password, the file is encrypted with **AES-256-GCM** and the key is
+derived using **Argon2id**, which takes about half a second. A backup that has
 been altered or damaged is refused rather than half-restored.
 
-The file is still a `.json` file either way, so every sync tool, file picker and
-save dialog behaves exactly as before. An encrypted one holds an envelope
-instead of your data:
+The file is a `.json` file either way, so sync tools, file pickers and save
+dialogs behave the same. An encrypted backup exported on a Mac imports on
+Windows and the other way round, and contains nothing that identifies you, your
+machine or when it was made.
 
-```json
-{
-  "orionBackup": "encrypted",
-  "formatVersion": 1,
-  "kdf": { "algorithm": "argon2id", "memoryKiB": 65536, "iterations": 3, ... },
-  "cipher": "aes-256-gcm",
-  "nonce": "...",
-  "ciphertext": "..."
-}
-```
+> **A lost password cannot be recovered.** There is no reset and no recovery
+> code. Keep it in a password manager.
 
-Nothing in it identifies you, your machine or when it was made — the timestamp
-lives inside the encrypted part. The settings used to derive the key travel in
-the file, so a backup opens on a slower or faster computer, and on either
-operating system: **an encrypted export from a Mac imports on Windows and the
-other way round.**
-
-> **A lost password cannot be recovered.** There is no reset, no recovery code
-> and no key held anywhere else — that is what makes the encryption worth
-> having. Keep the password in a password manager. If you would rather not
-> manage one, exporting without a password is a legitimate choice; just keep the
-> file somewhere you would keep the keys themselves.
-
-Importing still replaces everything, as it always has. A wrong password fails
-before any of your data is touched, and asks again rather than making you
-choose the file a second time.
+Importing replaces everything currently in Orion. A wrong password fails before
+any of your data is touched and asks again, without making you choose the file
+a second time.
 
 ## 🛠️ Usage Quickstart
 

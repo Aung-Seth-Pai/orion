@@ -14,6 +14,63 @@ Orion is a decoupled application connected by a secure IPC (Inter-Process Commun
 * **The Backend (`src-tauri/`):** A native Windows binary written in Rust using Tauri v2, `tokio` (for async execution), and `rusqlite` (for SQLite database management).
 * **The Bridge (`invoke`):** The React frontend sends JSON payloads via `invoke("command_name")` to Rust. Rust does the heavy lifting, serializes the response, and sends it back to React.
 
+## 1b. Design decisions and their reasoning
+
+Moved here out of the README, which describes what Orion does rather than why
+it does it that way.
+
+### Why Tauri rather than Electron
+
+|                | Orion                                                 | Typical Electron app       |
+| -------------- | ----------------------------------------------------- | -------------------------- |
+| **Runtime**    | The OS web view (WebView2 on Windows, WebKit on macOS) | Bundled Chromium           |
+| **Idle RAM**   | ~40–80 MB                                              | 300 MB+                    |
+| **Data layer** | Embedded SQLite, sub-ms queries                        | Cloud API or bundled DB    |
+| **Your data**  | Stays on the machine                                   | Usually synced to a vendor |
+
+No accounts, no telemetry, no cloud sync. The only network request Orion makes
+is the update check the user triggers from Settings; everything else works
+fully offline.
+
+### Scripts are never translated between platforms
+
+A PowerShell script machine-converted to zsh would look plausible and be wrong,
+which is worse than one that honestly declines to run. A script belonging to
+the other platform is therefore kept intact but inert, with the Run button
+disabled and the reason on hover. The import summary says so once, at the point
+of import, rather than letting the user discover it one script at a time.
+
+### The in-app updater serves Windows only
+
+An unsigned macOS app cannot reliably replace itself: the downloaded archive
+gets quarantined and the swap fails. Advertising an update path that cannot
+complete is worse than having none, so `latest.json` deliberately lists only
+`windows-x86_64` and Settings explains the situation rather than reporting a
+network error. Revisit if the app is ever notarized.
+
+### Backups are encrypted by default, with the password optional
+
+`workspace_env_vars` rows carry `env_key` / `env_value` verbatim — the field
+where API tokens live — so a plaintext export is a readable list of
+credentials, in exactly the kind of file that ends up on a USB stick or in a
+sync folder.
+
+Encryption is pre-selected rather than offered neutrally, because the default
+is the decision most users will take. Exporting in the clear stays available,
+since it is the only way to inspect or repair a backup by hand, but it states
+plainly what it means.
+
+The KDF cost is pinned as constants calibrated to roughly half a second, not
+measured at runtime: a timing loop would make exports vary with whatever else
+the machine is doing, and reproducibility matters more than hitting 0.5s
+exactly. The parameters still travel inside the file, so the constants can
+change later without stranding old backups, and a backup opens on a machine
+faster or slower than the one that wrote it.
+
+See the module documentation in `src-tauri/src/crypto.rs` for the envelope
+format and the reasoning behind the AAD binding, the parameter clamping and
+the deliberately ambiguous failure message.
+
 ## 2. Codebase Map (Where things live)
 
 ### 🦀 The Rust Backend (`src-tauri/src/`)
