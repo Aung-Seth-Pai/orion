@@ -13,7 +13,7 @@ It lives in your system tray — the menu bar on a Mac. Press `Ctrl + Shift + O`
 * **Focus Analytics:** Independent Pomodoro and stopwatch timers per workspace that keep running while you work elsewhere in the app, native OS notification banners on completion, and resettable **Total Time** tracking so you can measure a sprint without losing your history.
 * **Environment Variable Injection:** Store workspace-specific secrets (API keys, database URIs) that are injected into your scripts at runtime — including across the WSL boundary.
 * **Local-First & High Performance:** Built on **Tauri v2 + Rust + SQLite** rather than Electron. Roughly a **40–80 MB idle RAM footprint**, **sub-millisecond queries** against an on-disk database, and total data sovereignty.
-* **Data Portability:** Your entire setup exports to a single JSON file and imports back on any machine, including one running the other operating system.
+* **Data Portability:** Your entire setup exports to a single JSON file and imports back on any machine, including one running the other operating system. The export can be **encrypted with a password** — see [Backups](#-backups).
 
 ## ⚡ Why Not Electron?
 
@@ -117,6 +117,53 @@ which is worse than one that honestly declines to run.
 > PATH your shell builds, so Orion adds the usual Homebrew and MacPorts
 > locations when it runs a script. If you keep `python3` or `node` somewhere
 > unusual, set an absolute path in **Settings → General**.
+
+## 🔐 Backups
+
+**Settings → Data → Export data backup** writes your whole setup to one file
+and offers you a password. The password is optional, but it is offered first
+because a backup includes the values of your **environment variables** — which
+is where API keys and database URIs live. An unprotected backup is a readable
+list of them, and backups are exactly the kind of file that ends up on a USB
+stick or in a sync folder.
+
+With a password, the file is encrypted with **AES-256-GCM**, and the key is
+derived from your password with **Argon2id** tuned to take roughly half a
+second. That delay is the point: it is barely noticeable once, and it makes
+guessing passwords in bulk impractical. The file also carries an authentication
+tag covering both the data and the encryption parameters, so a backup that has
+been altered or damaged is refused rather than half-restored.
+
+The file is still a `.json` file either way, so every sync tool, file picker and
+save dialog behaves exactly as before. An encrypted one holds an envelope
+instead of your data:
+
+```json
+{
+  "orionBackup": "encrypted",
+  "formatVersion": 1,
+  "kdf": { "algorithm": "argon2id", "memoryKiB": 65536, "iterations": 3, ... },
+  "cipher": "aes-256-gcm",
+  "nonce": "...",
+  "ciphertext": "..."
+}
+```
+
+Nothing in it identifies you, your machine or when it was made — the timestamp
+lives inside the encrypted part. The settings used to derive the key travel in
+the file, so a backup opens on a slower or faster computer, and on either
+operating system: **an encrypted export from a Mac imports on Windows and the
+other way round.**
+
+> **A lost password cannot be recovered.** There is no reset, no recovery code
+> and no key held anywhere else — that is what makes the encryption worth
+> having. Keep the password in a password manager. If you would rather not
+> manage one, exporting without a password is a legitimate choice; just keep the
+> file somewhere you would keep the keys themselves.
+
+Importing still replaces everything, as it always has. A wrong password fails
+before any of your data is touched, and asks again rather than making you
+choose the file a second time.
 
 ## 🛠️ Usage Quickstart
 

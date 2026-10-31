@@ -1,0 +1,14 @@
+{
+  "orionBackup": "encrypted",
+  "formatVersion": 1,
+  "kdf": {
+    "algorithm": "argon2id",
+    "memoryKiB": 65536,
+    "iterations": 3,
+    "parallelism": 1,
+    "salt": "pFp/uwLXWWpAdmVEPEqWmw=="
+  },
+  "cipher": "aes-256-gcm",
+  "nonce": "Hvoc3MNgAEF9lFbH",
+  "ciphertext": "FA+iQfryrNf9Dae//QjvWH8UyCM75+CKzqPB8xpUhIauyS7uSVDx17xKowsBDfoMtz0g5YLypixGiupXgLqBSo8hgdr0aED7jzEgns7S02wZqv26p2Xb/fL9N5H++/uAUStpMKr3E5Tc/j9kJddoU44CaobSblSsPpW/14UyywAKNU06rYm+OGSKaI5lXJF+EP6+PwzgPlalxdPEiu3OOvTiTwgEGs3nrTJ4oU4QWPWeJkSV8T+VMn9Me8MksJ6t6jpLBVprWxg2KqJnz8ikw3A7fco/Y977XqHk7bbsO/fvJtc62qbqnfl2YaCVemini2HaFmh8F6zdwpE8VozTsakp7tEJk3/IkjSj84oen6aRef+IWTl+eVh1eZsvQvr+vsf2X+8="
+}

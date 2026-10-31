@@ -3,8 +3,11 @@ import {
   AlertTriangle,
   Check,
   Download,
+  Eye,
+  EyeOff,
   FolderOpen,
   Loader2,
+  Lock,
   RefreshCw,
   Sparkles,
   Trash2,
@@ -18,6 +21,7 @@ import {
   exportBackupToFile,
   getSettings,
   importData,
+  inspectBackup,
   setSpotlightShortcut,
   updateSetting,
 } from "../api/settings";
@@ -27,6 +31,7 @@ import { platform } from "../utils/platform";
 import ShortcutInput from "./ShortcutInput";
 import type { AiStatus } from "../types";
 import ThemePicker from "./ThemePicker";
+import ExportPasswordDialog from "./ExportPasswordDialog";
 
 const LAUNCH_ON_STARTUP_KEY = "launch_on_startup";
 const DEFAULT_IDE_KEY = "default_ide";
@@ -232,8 +237,17 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
   const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   const [exporting, setExporting] = useState(false);
+  const [askingExportPassword, setAskingExportPassword] = useState(false);
   const [importing, setImporting] = useState(false);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
+  // Whether the chosen file needs a password, answered by the backend rather
+  // than guessed from the file name or from a failed attempt.
+  const [pendingEncrypted, setPendingEncrypted] = useState(false);
+  const [importPassword, setImportPassword] = useState("");
+  // Shown inside the import dialog instead of replacing it, so a mistyped
+  // password costs a retype rather than choosing the file again.
+  const [importError, setImportError] = useState<string | null>(null);
+  const [revealImportPassword, setRevealImportPassword] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
@@ -418,30 +432,55 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
     }
   }, [onError]);
 
-  const handleExport = useCallback(async () => {
-    onError(null);
-    setStatusMessage(null);
-    setExporting(true);
-    try {
-      const filePath = await exportBackupToFile();
-      if (filePath) {
-        setStatusMessage(`Backup saved to ${filePath}`);
+  const runExport = useCallback(
+    async (password: string | null) => {
+      onError(null);
+      setStatusMessage(null);
+      setExporting(true);
+      try {
+        const filePath = await exportBackupToFile(password);
+        if (filePath) {
+          setStatusMessage(
+            password
+              ? `Encrypted backup saved to ${filePath}`
+              : `Backup saved to ${filePath}`
+          );
+        }
+        // null = user cancelled the native dialog — no message needed.
+        setAskingExportPassword(false);
+      } catch (e) {
+        // The dialog closes on failure: the error belongs with the Export
+        // button that started it, not floating behind a modal.
+        setAskingExportPassword(false);
+        onError(String(e));
+      } finally {
+        setExporting(false);
       }
-      // null = user cancelled the native dialog — no message needed.
-    } catch (e) {
-      onError(String(e));
-    } finally {
-      setExporting(false);
-    }
-  }, [onError]);
+    },
+    [onError]
+  );
+
+  /** Clears everything the import dialog holds, including the typed password. */
+  const dismissImport = useCallback(() => {
+    setPendingFile(null);
+    setPendingEncrypted(false);
+    setImportPassword("");
+    setImportError(null);
+    setRevealImportPassword(false);
+  }, []);
 
   const confirmImport = useCallback(async () => {
     if (!pendingFile || importing) return;
+    if (pendingEncrypted && !importPassword) return;
+    setImportError(null);
     setImporting(true);
     try {
       const text = await pendingFile.text();
-      const summary = await importData(text);
-      setPendingFile(null);
+      const summary = await importData(
+        text,
+        pendingEncrypted ? importPassword : null
+      );
+      dismissImport();
       // An import replaces the whole database, which clears the vector index
       // with it. Say so here rather than letting /ai come back empty later.
       setStatusMessage(
@@ -455,19 +494,46 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
       );
       onDataReplaced();
     } catch (e) {
-      setPendingFile(null);
-      onError(String(e));
+      // A wrong password is the one failure worth staying open for: the file
+      // is still chosen and still valid, and nothing has been written.
+      if (pendingEncrypted) {
+        setImportError(String(e));
+      } else {
+        dismissImport();
+        onError(String(e));
+      }
     } finally {
       setImporting(false);
     }
-  }, [pendingFile, importing, onDataReplaced, onError]);
+  }, [
+    pendingFile,
+    importing,
+    pendingEncrypted,
+    importPassword,
+    dismissImport,
+    onDataReplaced,
+    onError,
+  ]);
 
-  function onFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
+  async function onFileChosen(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
     onError(null);
     setStatusMessage(null);
+    setImportPassword("");
+    setImportError(null);
+
+    // Asked before the dialog opens so it can show the password field in the
+    // same step as the warning, rather than making the user confirm twice.
+    try {
+      const info = await inspectBackup(await file.text());
+      setPendingEncrypted(info.encrypted);
+    } catch {
+      // An unreadable file is the importer's error to report, with its own
+      // message. Treat it as plain and let the import fail properly.
+      setPendingEncrypted(false);
+    }
     setPendingFile(file);
   }
 
@@ -807,10 +873,12 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                 </p>
                 <p className="mt-0.5 mb-3 text-xs leading-relaxed text-ink-faint">
                   Download all workspaces, resources, scripts and timer history
-                  as a single JSON file.
+                  as a single JSON file. You will be offered a password, which
+                  encrypts the file — a backup opened on another computer, on
+                  either Windows or macOS, asks for the same password.
                 </p>
                 <button
-                  onClick={() => void handleExport()}
+                  onClick={() => setAskingExportPassword(true)}
                   disabled={exporting}
                   className="flex items-center gap-1.5 rounded bg-accent/90 px-3 py-1.5 text-xs font-medium text-accent-on transition-colors enabled:hover:bg-accent-bright disabled:cursor-not-allowed disabled:opacity-40"
                 >
@@ -875,12 +943,20 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
         </div>
       </div>
 
+      {askingExportPassword && (
+        <ExportPasswordDialog
+          busy={exporting}
+          onCancel={() => setAskingExportPassword(false)}
+          onConfirm={(password) => void runExport(password)}
+        />
+      )}
+
       {pendingFile && (
         <div
           role="dialog"
           aria-modal="true"
           onKeyDown={(e) => {
-            if (e.key === "Escape") setPendingFile(null);
+            if (e.key === "Escape") dismissImport();
           }}
           className="fixed inset-0 z-50 flex items-center justify-center bg-void/70 backdrop-blur-sm"
         >
@@ -904,18 +980,61 @@ export default function SettingsView({ onError, onDataReplaced }: SettingsViewPr
                 </p>
               </div>
             </div>
+
+            {pendingEncrypted && (
+              <div className="space-y-2">
+                <p className="flex items-start gap-1.5 text-xs leading-relaxed text-ink-muted">
+                  <Lock size={12} className="mt-0.5 shrink-0 text-accent-ink" />
+                  <span>
+                    This backup is encrypted. Enter the password it was
+                    exported with.
+                  </span>
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type={revealImportPassword ? "text" : "password"}
+                    value={importPassword}
+                    onChange={(e) => setImportPassword(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void confirmImport();
+                    }}
+                    placeholder="Password"
+                    aria-label="Password"
+                    maxLength={256}
+                    spellCheck={false}
+                    autoFocus
+                    className="min-w-0 flex-1 rounded bg-raised px-2 py-1.5 text-xs text-ink-strong placeholder-ink-faint outline-none ring-1 ring-transparent focus:ring-focus/50"
+                  />
+                  <button
+                    onClick={() => setRevealImportPassword((r) => !r)}
+                    title={revealImportPassword ? "Hide password" : "Show password"}
+                    aria-label={
+                      revealImportPassword ? "Hide password" : "Show password"
+                    }
+                    className="shrink-0 rounded p-1 text-ink-faint transition-colors hover:text-ink"
+                  >
+                    {revealImportPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+                {importError && (
+                  <p className="text-[11px] leading-relaxed text-danger-ink">
+                    {importError}
+                  </p>
+                )}
+              </div>
+            )}
             <div className="mt-4 flex justify-end gap-2">
               <button
-                onClick={() => setPendingFile(null)}
+                onClick={dismissImport}
                 className="flex items-center gap-1 rounded bg-raised px-3 py-1.5 text-xs font-medium text-ink-muted transition-colors hover:bg-raised-hover"
               >
                 <X size={12} />
                 Cancel
               </button>
               <button
-                autoFocus
+                autoFocus={!pendingEncrypted}
                 onClick={() => void confirmImport()}
-                disabled={importing}
+                disabled={importing || (pendingEncrypted && !importPassword)}
                 className="flex items-center gap-1.5 rounded bg-danger px-3 py-1.5 text-xs font-medium text-danger-on transition-colors enabled:hover:bg-danger disabled:opacity-50"
               >
                 {importing && <Loader2 size={12} className="animate-spin" />}

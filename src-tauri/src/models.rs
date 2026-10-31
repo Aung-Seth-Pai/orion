@@ -184,6 +184,17 @@ pub struct PlatformInfo {
     pub default_shortcut: String,
 }
 
+/// What can be told about a backup file without being able to open it.
+///
+/// A struct rather than a bare `bool` so a later build can say more -- the
+/// format version, say -- without changing the command's shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupInfo {
+    /// Whether a password is needed to import it.
+    pub encrypted: bool,
+}
+
 /// What an import actually brought in, so the UI can say so rather than just
 /// "Done".
 ///

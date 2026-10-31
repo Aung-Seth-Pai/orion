@@ -11,10 +11,11 @@ use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_notification::NotificationExt;
 use tokio::task::spawn_blocking;
 
+use crate::crypto;
 use crate::db::Db;
 use crate::platform;
 use crate::models::{
-    AiStatus, AutomationScript, BackupPayload, EnvVar, NewResource, NewScript, NewTask,
+    AiStatus, AutomationScript, BackupInfo, BackupPayload, EnvVar, NewResource, NewScript, NewTask,
     ImportSummary, NewTimerLog, NewWorkspace, PlatformInfo, Resource, ResourcePatch,
     ResourceSuggestion, ScriptPatch,
     SearchResult, Task, TimerLog, Workspace, WorkspacePatch,
@@ -2514,7 +2515,19 @@ pub async fn search_all(
 
 const MAX_SETTING_KEY: usize = 128;
 const MAX_SETTING_VALUE: usize = 8192;
+/// The ceiling on the backup that actually gets parsed, encrypted or not.
 const MAX_IMPORT_BYTES: usize = 33_554_432;
+/// The ceiling on the file as it arrives.
+///
+/// An encrypted backup is larger than its contents: base64 adds a third, and
+/// the envelope adds a header. The limit that protects the importer is the one
+/// on the decrypted payload above; this one exists only so a hostile file
+/// cannot be read into memory in the first place.
+const MAX_ENVELOPE_BYTES: usize = 50_331_648;
+// Enforced where the two are defined, because getting it wrong is silent: an
+// envelope ceiling below the inflated size of a maximal payload would refuse
+// backups the importer can handle perfectly well.
+const _: () = assert!(MAX_ENVELOPE_BYTES > MAX_IMPORT_BYTES * 4 / 3);
 const BACKUP_VERSION: i32 = 1;
 
 #[tauri::command]
@@ -2639,8 +2652,16 @@ pub async fn open_log_folder(app: AppHandle) -> Result<(), String> {
     platform::reveal_path(&dir)
 }
 
+/// Exports everything as JSON, encrypted when a password is given.
+///
+/// With no password the output is exactly what earlier versions wrote, so a
+/// deliberately readable export stays readable and nothing downstream has to
+/// know this feature exists.
 #[tauri::command]
-pub async fn export_all_data(db: State<'_, Db>) -> Result<String, String> {
+pub async fn export_all_data(
+    db: State<'_, Db>,
+    password: Option<String>,
+) -> Result<String, String> {
     let conn = db.0.clone();
 
     spawn_blocking(move || {
@@ -2758,11 +2779,36 @@ pub async fn export_all_data(db: State<'_, Db>) -> Result<String, String> {
             workspace_env_vars: env_vars,
         };
 
-        serde_json::to_string(&payload)
-            .map_err(|e| format!("failed to serialize backup: {e}"))
+        let json = serde_json::to_string(&payload)
+            .map_err(|e| format!("failed to serialize backup: {e}"))?;
+
+        // Encrypting happens on this thread rather than after the await:
+        // deriving the key is half a second of deliberate CPU work, which
+        // would otherwise block the async runtime and freeze the window.
+        match password.as_deref() {
+            Some(pw) => crypto::encrypt_backup(json.as_str(), pw),
+            None => Ok(json),
+        }
     })
     .await
     .map_err(|e| format!("background task failed: {e}"))?
+}
+
+/// Says whether a chosen file needs a password, so the import dialog can ask
+/// for one up front instead of failing and then asking.
+///
+/// The question is answered here rather than in TypeScript so the envelope
+/// format has one definition. The alternative -- attempting the import and
+/// matching on the error text -- breaks the moment a message is reworded.
+#[tauri::command]
+pub async fn inspect_backup(text: String) -> Result<BackupInfo, String> {
+    // Recognising the envelope means parsing the JSON, and a plain backup can
+    // be tens of megabytes, so it does not happen on the UI's thread.
+    spawn_blocking(move || BackupInfo {
+        encrypted: crypto::is_encrypted(&text),
+    })
+    .await
+    .map_err(|e| format!("background task failed: {e}"))
 }
 
 fn insert_workspace(tx: &rusqlite::Transaction, w: &Workspace) -> Result<(), String> {
@@ -2966,20 +3012,50 @@ fn summarise_import(payload: &BackupPayload) -> ImportSummary {
     summary
 }
 
+/// Turns the bytes of a chosen file into the JSON the importer expects.
+///
+/// Separate from the command, and free of both Tauri and the database, so the
+/// three ways this can go wrong -- an encrypted file with no password, a wrong
+/// password, a payload too large to load -- are testable without standing a
+/// database up. Nothing here touches stored data, which is the point: a file
+/// that fails to open must leave the existing setup exactly as it was.
+fn unseal_backup(json_payload: String, password: Option<&str>) -> Result<String, String> {
+    let plain = if crypto::is_encrypted(&json_payload) {
+        let password = password.ok_or_else(|| {
+            "This backup is encrypted. Enter the password it was exported with.".to_string()
+        })?;
+        crypto::decrypt_backup(&json_payload, password)?
+    } else {
+        json_payload
+    };
+
+    // Measured after decrypting, because this is the limit that matters: what
+    // gets parsed and loaded, not what happened to arrive on disk.
+    if plain.len() > MAX_IMPORT_BYTES {
+        return Err("Backup file is too large (max 32 MB)".into());
+    }
+
+    Ok(plain)
+}
+
 #[tauri::command]
 pub async fn import_data(
     db: State<'_, Db>,
     json_payload: String,
+    password: Option<String>,
 ) -> Result<ImportSummary, String> {
-    if json_payload.len() > MAX_IMPORT_BYTES {
-        return Err("Backup file is too large (max 32 MB)".into());
+    if json_payload.len() > MAX_ENVELOPE_BYTES {
+        return Err("Backup file is too large (max 48 MB)".into());
     }
 
     let conn = db.0.clone();
 
     spawn_blocking(move || {
-        // Parsing happens here on the blocking thread pool so a large file
-        // can never stall the async runtime or the UI.
+        // Decrypting is slow by design, and parsing a large file is slow by
+        // accident; both happen here on the blocking pool so neither can
+        // stall the async runtime or the UI.
+        let json_payload = unseal_backup(json_payload, password.as_deref())?;
+
         let mut payload: BackupPayload =
             serde_json::from_str(&json_payload).map_err(|e| format!("Invalid backup file: {e}"))?;
 
@@ -4299,6 +4375,67 @@ mod tests {
                 .collect()),
             ["s1", "s2"]
         );
+    }
+
+    /// A backup with the one field encryption exists to protect.
+    fn backup_with_a_secret() -> String {
+        serde_json::json!({
+            "version": 1,
+            "exported_at": "2026-01-01 00:00:00",
+            "workspaces": [],
+            "resources": [],
+            "automation_scripts": [],
+            "timer_logs": [],
+            "tasks": [],
+            "workspace_env_vars": [{
+                "id": "e1",
+                "workspace_id": "w1",
+                "env_key": "API_TOKEN",
+                "env_value": "example-value-not-a-credential",
+            }],
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn a_plain_backup_still_opens_without_a_password() {
+        // The regression that matters most: every backup written before this
+        // feature existed is unencrypted, and must keep importing untouched.
+        let plain = backup_with_a_secret();
+        assert_eq!(unseal_backup(plain.clone(), None).unwrap(), plain);
+        // A password supplied for a file that does not need one is ignored
+        // rather than treated as a mismatch.
+        assert_eq!(unseal_backup(plain.clone(), Some("unneeded")).unwrap(), plain);
+    }
+
+    #[test]
+    fn an_encrypted_backup_opens_with_its_password() {
+        let plain = backup_with_a_secret();
+        let sealed = crypto::encrypt_backup(&plain, "correct horse").unwrap();
+
+        // The file on disk must not contain the secret it carries.
+        assert!(!sealed.contains("API_TOKEN"));
+        assert_eq!(unseal_backup(sealed, Some("correct horse")).unwrap(), plain);
+    }
+
+    #[test]
+    fn an_encrypted_backup_without_a_password_says_so() {
+        let sealed = crypto::encrypt_backup(&backup_with_a_secret(), "pw").unwrap();
+
+        // Distinct from a wrong password: the UI needs to know whether to ask
+        // for a password or to report that the one given did not work.
+        let err = unseal_backup(sealed, None).unwrap_err();
+        assert!(err.contains("encrypted"), "{err}");
+    }
+
+    #[test]
+    fn a_wrong_password_fails_before_anything_is_written() {
+        let sealed = crypto::encrypt_backup(&backup_with_a_secret(), "pw").unwrap();
+
+        // unseal_backup has no access to the database by construction, so a
+        // failure here cannot have touched stored data -- which is the
+        // guarantee this test is really asserting.
+        assert!(unseal_backup(sealed, Some("not the password")).is_err());
     }
 
     #[test]

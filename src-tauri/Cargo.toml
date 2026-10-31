@@ -1,6 +1,6 @@
 [package]
 name = "orion"
-version = "0.4.0"
+version = "0.5.0"
 description = "Orion - a context-switching and focus workspace"
 edition = "2021"
 
@@ -45,6 +45,18 @@ tokenizers = { version = "0.22", default-features = false, features = ["fancy-re
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 tauri-plugin-window-state = "2"
 tauri-plugin-clipboard-manager = "2"
+# --- Backup encryption --------------------------------------------------------
+# All pure Rust, so they cross-compile to aarch64-apple-darwin with no C
+# toolchain. aes-gcm uses AES-NI on x86-64 and the ARMv8 crypto extensions on
+# Apple Silicon automatically, so the cipher is hardware-accelerated on both
+# without a feature flag.
+aes-gcm = "0.11.1"
+# password-hash is the PHC-string layer, which a backup file does not use: the
+# parameters live in the envelope rather than in an $argon2id$ string.
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc"] }
+base64 = "0.23.1"
+zeroize = "1.9.1"
+getrandom = "0.4.3"
 
 [profile.release]
 # Deliberately NOT panic = "abort". candle panics on tensor shape mismatches,

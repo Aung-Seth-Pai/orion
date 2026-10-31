@@ -3,6 +3,9 @@
 pub mod ai;
 mod alert;
 mod commands;
+/// Password-based encryption for the backup file, kept free of database and
+/// Tauri types so the whole format is reachable from a unit test.
+pub mod crypto;
 mod db;
 mod models;
 /// Every OS-specific behaviour in the app. See `platform/mod.rs` for the rule
@@ -18,6 +21,7 @@ use commands::{
     find_resource_by_target, get_ai_status,
     get_env_vars, get_resources, get_scripts, get_settings, get_tasks,
     get_all_workspace_times, get_platform_info, get_workspace_time, get_workspaces, import_data,
+    inspect_backup,
     launch_resource,
     log_timer_session,
     notify_timer_complete, open_log_folder, reindex_all, reorder_resources, reorder_scripts,
@@ -301,6 +305,7 @@ pub fn run() {
             update_setting,
             export_all_data,
             import_data,
+            inspect_backup,
             get_platform_info,
             get_tasks,
             create_task,
